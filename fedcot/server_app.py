@@ -1,5 +1,5 @@
 """
-Flower Server App for FedDCT
+Flower Server App for FedCT
 Handles server-side aggregation using majority voting
 """
 
@@ -13,9 +13,9 @@ from flwr.common import FitRes, Parameters, Scalar, ndarrays_to_parameters
 from flwr.server.client_proxy import ClientProxy
 
 
-class FedDCTStrategy(Strategy):
+class FedCTStrategy(Strategy):
     """
-    FedDCT Strategy with Majority Voting
+    FedCT Strategy with Majority Voting
 
     Implements Algorithm 1, Lines 11-12:
     - Line 11: L̄_t ← consensus(L¹_t, ..., L^m_t)
@@ -47,7 +47,7 @@ class FedDCTStrategy(Strategy):
 
     def initialize_parameters(self, client_manager):
         """
-        Initialize parameters (empty for FedDCT)
+        Initialize parameters (empty for FedCT)
 
         Returns:
             Empty parameters
@@ -60,7 +60,7 @@ class FedDCTStrategy(Strategy):
 
         Args:
             server_round: Current Flower server round number
-            parameters: Model parameters (empty for FedDCT)
+            parameters: Model parameters (empty for FedCT)
             client_manager: Flower client manager
 
         Returns:
@@ -168,7 +168,7 @@ class FedDCTStrategy(Strategy):
                 
                 stats.update(consensus_stats)
 
-        # Return empty parameters (FedDCT doesn't aggregate model weights)
+        # Return empty parameters (FedCT doesn't aggregate model weights)
         return ndarrays_to_parameters([]), stats
 
     def _majority_vote(self, client_predictions: Dict[int, List[int]]):
@@ -267,15 +267,15 @@ class FedDCTStrategy(Strategy):
         print(f"{'=' * 80}\n")
 
     def configure_evaluate(self, server_round, parameters, client_manager):
-        """Configure evaluation (not used in FedDCT)"""
+        """Configure evaluation (not used in FedCT)"""
         return []
 
     def aggregate_evaluate(self, server_round, results, failures):
-        """Aggregate evaluation (not used in FedDCT)"""
+        """Aggregate evaluation (not used in FedCT)"""
         return None, {}
 
     def evaluate(self, server_round, parameters):
-        """Server-side evaluation (not used in FedDCT)"""
+        """Server-side evaluation (not used in FedCT)"""
         return None
 
 
@@ -302,7 +302,7 @@ def server_fn(context: Context):
     total_server_rounds = num_communication_rounds * num_local_rounds
     
     print(f"\n{'=' * 80}")
-    print("FEDERATED CO-TRAINING (FedDCT) - FLOWER IMPLEMENTATION")
+    print("FEDERATED CO-TRAINING (FedCT) - FLOWER IMPLEMENTATION")
     print(f"{'=' * 80}")
     print(f"Configuration:")
     print(f"  Dataset:                       {dataset}")
@@ -316,7 +316,7 @@ def server_fn(context: Context):
     print(f"{'=' * 80}\n")
     
     # Create strategy
-    strategy = FedDCTStrategy(
+    strategy = FedCTStrategy(
         num_clients=num_clients, 
         num_local_rounds=num_local_rounds,
         optimizer=optimizer,

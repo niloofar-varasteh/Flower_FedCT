@@ -1,9 +1,9 @@
 #!/bin/bash
 
 ################################################################################
-# Federated Co-Training (FedDCT) Experiment Runner
+# Federated Co-Training (FedCT) Experiment Runner
 #
-# This script runs FedDCT experiments with clear, explicit parameters.
+# This script runs FedCT experiments with clear, explicit parameters.
 #
 # Key Concepts:
 #   - Num communication rounds: How many times clients communicate with server
@@ -46,7 +46,7 @@ NC='\033[0m' # No Color
 
 # Function to display help
 show_help() {
-    echo "Federated Co-Training (FedDCT) Experiment Runner"
+    echo "Federated Co-Training (FedCT) Experiment Runner"
     echo ""
     echo "Usage: $0 [OPTIONS]"
     echo ""
@@ -140,7 +140,7 @@ fi
 
 # Print experiment configuration
 echo -e "${BLUE}=================================${NC}"
-echo -e "${BLUE}FedDCT Experiment Configuration${NC}"
+echo -e "${BLUE}FedCT Experiment Configuration${NC}"
 echo -e "${BLUE}=================================${NC}"
 echo -e "Dataset:                       ${GREEN}${DATASET}${NC}"
 echo -e "Num communication rounds:      ${GREEN}${NUM_COMMUNICATION_ROUNDS}${NC}"

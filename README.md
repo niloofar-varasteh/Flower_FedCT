@@ -1,6 +1,6 @@
-# Federated Deep Co-Training (FedDCT)
+# Federated Deep Co-Training (FedCT)
 
-A **Flower-based implementation** of Federated Deep Co-Training (FedDCT), a semi-supervised federated learning approach where clients collaboratively train models by **sharing predictions only** (not model weights) on a public unlabeled dataset.
+A **Flower-based implementation** of Federated Deep Co-Training (FedCT), a semi-supervised federated learning approach where clients collaboratively train models by **sharing predictions only** (not model weights) on a public unlabeled dataset.
 
 ---
 
@@ -38,7 +38,7 @@ export USE_DIRECT_EXECUTION=1
 
 ## 🎯 Overview
 
-**FedDCT (Federated Deep Co-Training)** is a semi-supervised federated learning method that:
+**FedCT (Federated Deep Co-Training)** is a semi-supervised federated learning method that:
 
 - ✅ Trains on **private labeled data** at each client
 - ✅ Leverages **public unlabeled data** shared across all clients
@@ -59,7 +59,7 @@ export USE_DIRECT_EXECUTION=1
 
 ### High-Level Overview
 
-FedDCT enables multiple clients to collaboratively train models **without sharing private data or model weights**. Instead:
+FedCT enables multiple clients to collaboratively train models **without sharing private data or model weights**. Instead:
 
 1. 🗂️ Each client has **private labeled data** (not shared)
 2. 📊 All clients access the same **public unlabeled dataset** (shared)
@@ -219,7 +219,7 @@ pip install -r requirements.txt
 
 ## 🚀 Running Experiments
 
-You have **two options** to run FedDCT experiments:
+You have **two options** to run FedCT experiments:
 
 ### Option 1: Flower Simulation (Recommended)
 
@@ -491,7 +491,7 @@ Both Flower simulation and direct execution produce similar output:
 
 ```
 =================================
-FedDCT Experiment Configuration
+FedCT Experiment Configuration
 =================================
 Dataset:                       CIFAR10
 Num communication rounds:      3
@@ -692,11 +692,11 @@ Flower_FedCT/
 
 ### Two Execution Modes
 
-This project implements FedDCT in **two equivalent ways**:
+This project implements FedCT in **two equivalent ways**:
 
 | Feature | Flower Simulation | Direct Execution |
 |---------|-------------------|------------------|
-| **Algorithm** | ✅ Same FedDCT | ✅ Same FedDCT |
+| **Algorithm** | ✅ Same FedCT | ✅ Same FedCT |
 | **Results** | ✅ Identical | ✅ Identical |
 | **Framework** | Uses Flower + Ray | Pure Python |
 | **Architecture** | Client-Server (distributed) | Single process |
@@ -978,7 +978,7 @@ for epoch in range(num_local_rounds):
 
 ### Key Points
 
-1. **Both implement the exact same FedDCT algorithm**
+1. **Both implement the exact same FedCT algorithm**
 2. **Both produce identical results**
 3. **Both share the same core ML logic** (`fedcot/task.py`)
 4. **Flower is recommended** for official deployments
@@ -1034,4 +1034,4 @@ For questions or issues, please open an issue on GitHub.
 
 ---
 
-**Happy Federated Learning with FedDCT!** 🌸🚀
+**Happy Federated Learning with FedCT!** 🌸🚀

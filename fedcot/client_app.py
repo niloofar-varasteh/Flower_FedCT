@@ -1,5 +1,5 @@
 """
-Flower Client App for FedDCT
+Flower Client App for FedCT
 Handles client-side training and prediction
 """
 
@@ -18,9 +18,9 @@ from fedcot.task import (
 )
 
 
-class FedDCTClient(NumPyClient):
+class FedCTClient(NumPyClient):
     """
-    FedDCT Flower Client
+    FedCT Flower Client
 
     Implements Algorithm 1 from the paper:
     - Local training on Di ∪ P^t
@@ -62,7 +62,7 @@ class FedDCTClient(NumPyClient):
         Train the client model for one local round
 
         Args:
-            parameters: Model parameters (not used in FedDCT)
+            parameters: Model parameters (not used in FedCT)
             config: Configuration dict
 
         Returns:
@@ -134,7 +134,7 @@ class FedDCTClient(NumPyClient):
                     "test_acc": float(test_acc),
                 }
 
-            # Return empty parameters (FedDCT doesn't share model weights)
+            # Return empty parameters (FedCT doesn't share model weights)
             return [], len(self.trainloader.dataset), metrics
             
         except Exception as e:
@@ -171,7 +171,7 @@ def client_fn(context: Context):
         context: Flower context with node configuration
 
     Returns:
-        FedDCTClient instance wrapped as Flower client
+        FedCTClient instance wrapped as Flower client
     """
     # Get configuration from run config
     num_partitions = context.run_config.get("num-clients", 5)
@@ -182,7 +182,7 @@ def client_fn(context: Context):
 
     # Note: partition_id will be set dynamically from config during fit()
     # This is a workaround since we need to support num-supernodes > num-clients
-    return FedDCTClient(
+    return FedCTClient(
         partition_id=0,  # Will be overridden by logical_partition_id from config
         num_partitions=num_partitions,
         unlabeled_size=unlabeled_size,

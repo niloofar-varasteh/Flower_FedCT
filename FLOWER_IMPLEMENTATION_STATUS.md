@@ -2,7 +2,7 @@
 
 ## ✅ Flower Framework Implementation Complete
 
-The FedDCT algorithm has been fully implemented using the Flower framework with proper client-server architecture.
+The FedCT algorithm has been fully implemented using the Flower framework with proper client-server architecture.
 
 ---
 
@@ -80,7 +80,7 @@ python run_direct.py \
 
 **Advantages:**
 - ✅ Bypasses Ray/Pydantic compatibility issues
-- ✅ Same FedDCT logic and output
+- ✅ Same FedCT logic and output
 - ✅ Easier to debug
 - ✅ No environment issues
 
@@ -98,7 +98,7 @@ python run_direct.py \
 │                  (fedcot/server_app.py)                      │
 ├──────────────────────────────────────────────────────────────┤
 │                                                              │
-│  FedDCTStrategy:                                            │
+│  FedCTStrategy:                                            │
 │    - Tracks local rounds and communication cycles           │
 │    - configure_fit(): Send config to clients                │
 │    - aggregate_fit(): Collect metrics, perform voting       │
@@ -219,7 +219,7 @@ pip install 'ray>=2.7.0,<2.10.0' 'pydantic>=1.10.0,<2.0.0'
 | **Distributed** | ✅ Can run distributed | ❌ Local only |
 | **Ray Issues** | ❌ Affected by Ray/Pydantic | ✅ No Ray dependency |
 | **Output** | ✅ Same format | ✅ Same format |
-| **Algorithm** | ✅ Identical FedDCT | ✅ Identical FedDCT |
+| **Algorithm** | ✅ Identical FedCT | ✅ Identical FedCT |
 | **Performance** | ✅ Can be parallel | ❌ Sequential |
 | **Debugging** | ❌ More complex | ✅ Easier |
 | **Production** | ✅ Production-ready | ❌ Development only |
@@ -233,7 +233,7 @@ pip install 'ray>=2.7.0,<2.10.0' 'pydantic>=1.10.0,<2.0.0'
 - Avoids Ray issues
 - Faster iteration
 - Easier debugging
-- Same FedDCT algorithm
+- Same FedCT algorithm
 
 ### For Production & Deployment
 ✅ **Use Flower Framework**
@@ -245,7 +245,7 @@ pip install 'ray>=2.7.0,<2.10.0' 'pydantic>=1.10.0,<2.0.0'
 ### For Flower Users
 ✅ **Both implementations available**
 - Flower implementation in `fedcot/client_app.py` and `fedcot/server_app.py`
-- Can be used as reference for Flower-based FedDCT
+- Can be used as reference for Flower-based FedCT
 - Direct execution as fallback
 
 ---
@@ -291,5 +291,5 @@ export USE_DIRECT_EXECUTION=1
 
 ## ✅ Status: COMPLETE
 
-Both Flower framework implementation and direct execution are fully functional and provide identical FedDCT algorithm behavior.
+Both Flower framework implementation and direct execution are fully functional and provide identical FedCT algorithm behavior.
 

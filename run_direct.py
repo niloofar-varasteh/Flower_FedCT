@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Direct execution script for FedDCT that bypasses Ray simulation issues.
+Direct execution script for FedCT that bypasses Ray simulation issues.
 This runs the clients sequentially without Ray's distributed backend.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from fedcot.task import get_model, load_data, train, test, predict_on_unlabeled, create_pseudo_labeled_dataset, combine_with_pseudo_labels
-from fedcot.server_app import FedDCTStrategy
+from fedcot.server_app import FedCTStrategy
 from collections import Counter
 import torch
 import numpy as np
@@ -22,7 +22,7 @@ def run_fedcot_experiment(num_communication_rounds=20, num_clients=5, num_local_
                          dataset="CIFAR10", optimizer="SGD", learning_rate=0.01,
                          private_batch_size=32, public_batch_size=32):
     """
-    Run FedDCT experiment without Ray simulation
+    Run FedCT experiment without Ray simulation
     
     Args:
         num_communication_rounds: Number of communication rounds
@@ -37,7 +37,7 @@ def run_fedcot_experiment(num_communication_rounds=20, num_clients=5, num_local_
     """
     
     print("=" * 80)
-    print("FEDERATED CO-TRAINING (FedDCT) - DIRECT EXECUTION")
+    print("FEDERATED CO-TRAINING (FedCT) - DIRECT EXECUTION")
     print("=" * 80)
     print(f"Configuration:")
     print(f"  Dataset:                       {dataset}")
@@ -238,7 +238,7 @@ def print_summary(consensus, client_predictions, client_metrics):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run FedDCT experiment directly (no Ray)")
+    parser = argparse.ArgumentParser(description="Run FedCT experiment directly (no Ray)")
     parser.add_argument("--communication-rounds", type=int, default=20, help="Number of communication rounds")
     parser.add_argument("--clients", type=int, default=5, help="Number of clients")
     parser.add_argument("--local-rounds", type=int, default=5, help="Number of local rounds (passes through dataset) before communication")

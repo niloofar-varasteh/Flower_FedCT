@@ -1,5 +1,5 @@
 """
-ML Task: Model, Data, Training for FedDCT , task.py = model.py + dataset.py + Training Functions
+ML Task: Model, Data, Training for FedCT , task.py = model.py + dataset.py + Training Functions
 Contains all ML-related code: model definition, data loading, training, evaluation
 """
 
