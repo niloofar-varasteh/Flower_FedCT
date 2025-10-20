@@ -1006,11 +1006,14 @@ Compare the results - they should be identical!
 If you use this implementation in your research, please cite:
 
 ```bibtex
-@software{fedcot2025,
-  title={Federated Deep Co-Training with Flower},
-  author={Your Name},
-  year={2025},
-  url={https://github.com/yourusername/Flower_FedCT}
+@inproceedings{abourayya2025little,
+  title={Little is enough: Boosting privacy by sharing only hard labels in federated semi-supervised learning},
+  author={Abourayya, Amr and Kleesiek, Jens and Rao, Kanishka and Ayday, Erman and Rao, Bharat and Webb, Geoffrey I and Kamp, Michael},
+  booktitle={Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume={39},
+  number={15},
+  pages={15293--15301},
+  year={2025}
 }
 ```
 
