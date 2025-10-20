@@ -1,6 +1,6 @@
 # Federated Deep Co-Training (FedCT)
 
-A **Flower-based implementation** of Federated Deep Co-Training (FedDCT), a semi-supervised federated learning approach where clients collaboratively train models by **sharing predictions only** (not model weights) on a public unlabeled dataset.
+A **Flower-based implementation** of Federated Deep Co-Training (FedCT), a semi-supervised federated learning approach where clients collaboratively train models by **sharing predictions only** (not model weights) on a public unlabeled dataset.
 
 ---
 
