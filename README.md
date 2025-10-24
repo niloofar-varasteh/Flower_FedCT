@@ -1,10 +1,9 @@
-# Federated Deep Co-Training (FedCT)
+# Federated Co-Training (FedCT)
 
-A **Flower-based implementation** of Federated Deep Co-Training (FedCT), a semi-supervised federated learning approach where clients collaboratively train models by **sharing predictions only** (not model weights) on a public unlabeled dataset.
+A Flower-based implementation of Federated Deep Co-Training (FedCT), a semi-supervised federated learning approach where clients collaboratively train models by sharing predictions only (not model weights) on a public unlabeled dataset.
 
----
 
-## 🚀 Quick Start
+## Quick Start
 
 **Run with Flower framework (recommended):**
 ```bash
@@ -21,7 +20,7 @@ export USE_DIRECT_EXECUTION=1
 
 ---
 
-## 📋 Table of Contents
+##  Table of Contents
 
 - [Overview](#-overview)
 - [How It Works](#-how-it-works)
@@ -36,7 +35,7 @@ export USE_DIRECT_EXECUTION=1
 
 ---
 
-## 🎯 Overview
+##  Overview
 
 **FedCT (Federated Deep Co-Training)** is a semi-supervised federated learning method that:
 
@@ -54,18 +53,6 @@ export USE_DIRECT_EXECUTION=1
 - **Flexible**: Supports multiple datasets, optimizers, and hyperparameters
 
 ---
-
-## 🔧 How It Works
-
-### High-Level Overview
-
-FedCT enables multiple clients to collaboratively train models **without sharing private data or model weights**. Instead:
-
-1. 🗂️ Each client has **private labeled data** (not shared)
-2. 📊 All clients access the same **public unlabeled dataset** (shared)
-3. 🤝 Clients share **predictions only** (hard labels, not probabilities)
-4. 🗳️ Server creates **consensus labels** via majority voting
-5. 🔄 Clients train on **private data + pseudo-labeled public data**
 
 ### Training Workflow
 
@@ -95,7 +82,7 @@ FedCT enables multiple clients to collaboratively train models **without sharing
 │    → All clients train on PRIVATE DATA ONLY                     │
 │    → Training completed                                         │
 │                                                                 │
-│  🗳️  COMMUNICATION ROUND 1:                                      │
+│    COMMUNICATION ROUND 1:                                      │
 │    1. Each client predicts labels on public dataset            │
 │    2. Clients send predictions to server                       │
 │    3. Server performs majority voting → consensus labels       │
@@ -121,7 +108,7 @@ FedCT enables multiple clients to collaboratively train models **without sharing
 │    → All clients train on PRIVATE + PSEUDO-LABELED PUBLIC      │
 │    → Training completed                                         │
 │                                                                 │
-│  🗳️  COMMUNICATION ROUND:                                        │
+│    COMMUNICATION ROUND:                                        │
 │    1. Clients predict on public dataset                        │
 │    2. Server performs majority voting → UPDATE labels          │
 │    3. Server sends updated consensus labels                    │
@@ -178,17 +165,6 @@ Total: 6 Flower server rounds = 3 communication rounds × 2 local rounds
 
 ---
 
-## 📦 Installation
-
-### Requirements
-
-- Python 3.9+
-- PyTorch
-- torchvision
-- Flower (flwr)
-- NumPy
-- Ray (for Flower simulation)
-
 ### Recommended Setup
 
 ```bash
@@ -217,7 +193,7 @@ pip install -r requirements.txt
 
 ---
 
-## 🚀 Running Experiments
+##  Running Experiments
 
 You have **two options** to run FedCT experiments:
 
@@ -264,7 +240,7 @@ python run_direct.py --clients 5 --communication-rounds 10 --local-rounds 2
 
 ---
 
-## ⚠️ Troubleshooting Installation
+##  Troubleshooting Installation
 
 ### Issue 1: Ray/Pydantic Compatibility
 
