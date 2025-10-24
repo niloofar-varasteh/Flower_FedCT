@@ -48,7 +48,18 @@ class FedCTClient(NumPyClient):
         self.private_batch_size = private_batch_size
         self.public_batch_size = public_batch_size
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
+        # Add after line 48 in client_app.py
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # FIXED: Safe GPU detection
+        if torch.cuda.is_available():
+            try:
+                gpu_name = torch.cuda.get_device_name(0)
+                print(f"✓ Using GPU: {gpu_name}")
+            except:
+                print("✓ Using GPU: CUDA device detected")
+        else:
+            print("⚠️  WARNING: CUDA not available, running on CPU")
         # Data loaders (will be initialized on first fit() call)
         self.trainloader = None
         self.valloader = None
