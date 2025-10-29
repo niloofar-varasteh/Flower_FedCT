@@ -1,5 +1,5 @@
 """
-ML Task: Model, Data, Training for FedCT with IID/Non-IID support
+ML Task: Model, Data, Training for FedCT , task.py = model.py + dataset.py + Training Functions
 Contains all ML-related code: model definition, data loading, training, evaluation
 """
 
@@ -11,44 +11,78 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader, Subset, ConcatDataset
 import numpy as np
 from typing import List, Tuple
-from collections import defaultdict
+import shutil
+shutil.rmtree('./data/cifar-10-batches-py', ignore_errors=True)
+# Then re-run your training
 
 
 # ============================================================================
 # MODEL DEFINITION
 # ============================================================================
 
-class SimpleCNN(nn.Module):
-    """Simple CNN for image classification"""
+class BasicBlock(nn.Module):
+    """Basic Residual Block for ResNet"""
+    expansion = 1
 
-    def __init__(self, num_classes=10, in_channels=3, img_size=32):
-        super(SimpleCNN, self).__init__()
+    def __init__(self, in_planes, planes, stride=1):
+        super(BasicBlock, self).__init__()
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(planes)
 
-        self.conv1 = nn.Conv2d(in_channels, 64, 3, padding=1)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.conv2 = nn.Conv2d(64, 128, 3, padding=1)
-        self.bn2 = nn.BatchNorm2d(128)
-        self.conv3 = nn.Conv2d(128, 256, 3, padding=1)
-        self.bn3 = nn.BatchNorm2d(256)
-
-        self.pool = nn.MaxPool2d(2, 2)
-        self.dropout = nn.Dropout(0.3)
-
-        # Calculate size after 3 pooling layers
-        final_size = img_size // (2 ** 3)  # 3 pooling layers
-        self.fc1 = nn.Linear(256 * final_size * final_size, 512)
-        self.fc2 = nn.Linear(512, num_classes)
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion * planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(self.expansion * planes)
+            )
 
     def forward(self, x):
-        x = self.pool(F.relu(self.bn1(self.conv1(x))))
-        x = self.pool(F.relu(self.bn2(self.conv2(x))))
-        x = self.pool(F.relu(self.bn3(self.conv3(x))))
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = F.relu(out)
+        return out
 
-        x = x.view(x.size(0), -1)
-        x = self.dropout(F.relu(self.fc1(x)))
-        x = self.fc2(x)
 
-        return x
+class ImprovedCNN(nn.Module):
+    """Improved ResNet-style CNN for CIFAR-10/FashionMNIST with better accuracy"""
+
+    def __init__(self, num_classes=10, in_channels=3):
+        super(ImprovedCNN, self).__init__()
+        self.in_planes = 64
+
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+
+        # Residual layers
+        self.layer1 = self._make_layer(64, 2, stride=1)
+        self.layer2 = self._make_layer(128, 2, stride=2)
+        self.layer3 = self._make_layer(256, 2, stride=2)
+        self.layer4 = self._make_layer(512, 2, stride=2)
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512 * BasicBlock.expansion, num_classes)
+
+    def _make_layer(self, planes, num_blocks, stride):
+        strides = [stride] + [1] * (num_blocks - 1)
+        layers = []
+        for stride in strides:
+            layers.append(BasicBlock(self.in_planes, planes, stride))
+            self.in_planes = planes * BasicBlock.expansion
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.avgpool(out)
+        out = out.view(out.size(0), -1)
+        out = self.fc(out)
+        return out
 
 
 def get_model(dataset: str = "CIFAR10"):
@@ -58,12 +92,12 @@ def get_model(dataset: str = "CIFAR10"):
         dataset: Dataset name - "CIFAR10" or "FashionMNIST"
 
     Returns:
-        Model instance
+        Model instance (ImprovedCNN - ResNet-style architecture)
     """
     if dataset == "CIFAR10":
-        return SimpleCNN(num_classes=10, in_channels=3, img_size=32)
+        return ImprovedCNN(num_classes=10, in_channels=3)
     elif dataset == "FashionMNIST":
-        return SimpleCNN(num_classes=10, in_channels=1, img_size=28)
+        return ImprovedCNN(num_classes=10, in_channels=1)
     else:
         raise ValueError(f"Unsupported dataset: {dataset}")
 
@@ -103,156 +137,12 @@ class PseudoLabeledDataset(Dataset):
 
 
 # ============================================================================
-# DATA PARTITIONING STRATEGIES
-# ============================================================================
-
-def partition_data_iid(private_indices, num_partitions, seed=42):
-    """
-    IID partitioning: Randomly distribute data equally among clients
-
-    Args:
-        private_indices: Indices to partition
-        num_partitions: Number of clients
-        seed: Random seed for reproducibility
-
-    Returns:
-        List of index arrays, one per client
-    """
-    np.random.seed(seed)
-    shuffled_indices = np.random.permutation(private_indices)
-
-    samples_per_client = len(shuffled_indices) // num_partitions
-    partitions = []
-
-    for i in range(num_partitions):
-        start_idx = i * samples_per_client
-        end_idx = start_idx + samples_per_client
-        partitions.append(shuffled_indices[start_idx:end_idx])
-
-    return partitions
-
-
-def partition_data_non_iid_dirichlet(trainset, private_indices, num_partitions, num_classes=10, alpha=0.5, seed=42):
-    """
-    Non-IID partitioning using Dirichlet distribution
-
-    Lower alpha = more non-IID (e.g., 0.1 = highly non-IID, 1.0 = moderately non-IID)
-
-    Args:
-        trainset: Original training dataset (to access labels)
-        private_indices: Indices to partition
-        num_partitions: Number of clients
-        num_classes: Number of classes in dataset
-        alpha: Dirichlet concentration parameter (lower = more non-IID)
-        seed: Random seed
-
-    Returns:
-        List of index arrays, one per client
-    """
-    np.random.seed(seed)
-
-    # Get labels for private indices
-    if hasattr(trainset, 'targets'):
-        all_labels = np.array(trainset.targets)
-    elif hasattr(trainset, 'labels'):
-        all_labels = np.array(trainset.labels)
-    else:
-        # Fallback: manually extract labels
-        all_labels = np.array([trainset[i][1] for i in range(len(trainset))])
-
-    private_labels = all_labels[private_indices]
-
-    # Group indices by class
-    class_indices = defaultdict(list)
-    for idx, label in zip(private_indices, private_labels):
-        class_indices[label].append(idx)
-
-    # Sample proportions from Dirichlet distribution for each class
-    partitions = [[] for _ in range(num_partitions)]
-
-    for class_id in range(num_classes):
-        indices = np.array(class_indices[class_id])
-        np.random.shuffle(indices)
-
-        # Sample proportions for this class
-        proportions = np.random.dirichlet([alpha] * num_partitions)
-        proportions = (proportions * len(indices)).astype(int)
-
-        # Adjust to ensure all samples are distributed
-        proportions[-1] = len(indices) - proportions[:-1].sum()
-
-        # Distribute indices according to proportions
-        start_idx = 0
-        for client_id, count in enumerate(proportions):
-            end_idx = start_idx + count
-            partitions[client_id].extend(indices[start_idx:end_idx])
-            start_idx = end_idx
-
-    # Shuffle each partition
-    for i in range(num_partitions):
-        np.random.shuffle(partitions[i])
-        partitions[i] = np.array(partitions[i])
-
-    return partitions
-
-
-def partition_data_non_iid_shards(trainset, private_indices, num_partitions, shards_per_client=2, seed=42):
-    """
-    Non-IID partitioning using class shards (each client gets few classes)
-
-    Args:
-        trainset: Original training dataset
-        private_indices: Indices to partition
-        num_partitions: Number of clients
-        shards_per_client: Number of class shards per client
-        seed: Random seed
-
-    Returns:
-        List of index arrays, one per client
-    """
-    np.random.seed(seed)
-
-    # Get labels
-    if hasattr(trainset, 'targets'):
-        all_labels = np.array(trainset.targets)
-    elif hasattr(trainset, 'labels'):
-        all_labels = np.array(trainset.labels)
-    else:
-        all_labels = np.array([trainset[i][1] for i in range(len(trainset))])
-
-    private_labels = all_labels[private_indices]
-
-    # Sort indices by label
-    sorted_indices = private_indices[np.argsort(private_labels)]
-
-    # Divide into shards
-    num_shards = num_partitions * shards_per_client
-    shard_size = len(sorted_indices) // num_shards
-    shards = [sorted_indices[i * shard_size:(i + 1) * shard_size] for i in range(num_shards)]
-
-    # Randomly assign shards to clients
-    shard_indices = list(range(num_shards))
-    np.random.shuffle(shard_indices)
-
-    partitions = [[] for _ in range(num_partitions)]
-    for client_id in range(num_partitions):
-        client_shards = shard_indices[client_id * shards_per_client:(client_id + 1) * shards_per_client]
-        for shard_id in client_shards:
-            partitions[client_id].extend(shards[shard_id])
-        partitions[client_id] = np.array(partitions[client_id])
-
-    return partitions
-
-
-# ============================================================================
 # DATA LOADING
 # ============================================================================
 
-def load_data(partition_id: int, num_partitions: int = 5, unlabeled_size: int = 500, batch_size: int = 32,
-              dataset: str = "CIFAR10", data_distribution: str = "iid", alpha: float = 0.5,
-              shards_per_client: int = 2):
+def load_data(partition_id: int, num_partitions: int = 5, unlabeled_size: int = 500, batch_size: int = 32, dataset: str = "CIFAR10"):
     """
-    Load dataset for a specific partition with IID or Non-IID distribution
+    Load dataset for a specific partition
 
     Args:
         partition_id: ID of this client (0 to num_partitions-1)
@@ -260,9 +150,6 @@ def load_data(partition_id: int, num_partitions: int = 5, unlabeled_size: int = 
         unlabeled_size: Size of public unlabeled dataset U (shared across all clients)
         batch_size: Batch size for training
         dataset: Dataset name - "CIFAR10" or "FashionMNIST"
-        data_distribution: "iid", "non-iid-dirichlet", or "non-iid-shards"
-        alpha: Dirichlet concentration parameter (for non-iid-dirichlet)
-        shards_per_client: Number of shards per client (for non-iid-shards)
 
     Returns:
         trainloader: DataLoader for private training data
@@ -290,7 +177,6 @@ def load_data(partition_id: int, num_partitions: int = 5, unlabeled_size: int = 
         testset = torchvision.datasets.CIFAR10(
             root="./data", train=False, download=True, transform=transform_test
         )
-        num_classes = 10
     elif dataset == "FashionMNIST":
         transform_train = transforms.Compose([
             transforms.ToTensor(),
@@ -306,7 +192,6 @@ def load_data(partition_id: int, num_partitions: int = 5, unlabeled_size: int = 
         testset = torchvision.datasets.FashionMNIST(
             root="./data", train=False, download=True, transform=transform_test
         )
-        num_classes = 10
     else:
         raise ValueError(f"Unsupported dataset: {dataset}. Supported: CIFAR10, FashionMNIST")
 
@@ -325,56 +210,28 @@ def load_data(partition_id: int, num_partitions: int = 5, unlabeled_size: int = 
     # Create public unlabeled dataset
     public_dataset = UnlabeledDataset(trainset, public_indices)
 
-    # Partition private data based on distribution type
-    if data_distribution.lower() == "iid":
-        partitions = partition_data_iid(private_indices, num_partitions)
-        dist_info = "IID"
-    elif data_distribution.lower() == "non-iid-dirichlet":
-        partitions = partition_data_non_iid_dirichlet(
-            trainset, private_indices, num_partitions, num_classes, alpha
-        )
-        dist_info = f"Non-IID (Dirichlet α={alpha})"
-    elif data_distribution.lower() == "non-iid-shards":
-        partitions = partition_data_non_iid_shards(
-            trainset, private_indices, num_partitions, shards_per_client
-        )
-        dist_info = f"Non-IID (Shards={shards_per_client}/client)"
-    else:
-        raise ValueError(f"Unsupported distribution: {data_distribution}")
-
-    # Get this client's partition
-    client_indices = partitions[partition_id]
-
-    # Analyze class distribution for this client
-    if hasattr(trainset, 'targets'):
-        all_labels = np.array(trainset.targets)
-    elif hasattr(trainset, 'labels'):
-        all_labels = np.array(trainset.labels)
-    else:
-        all_labels = np.array([trainset[i][1] for i in range(len(trainset))])
-
-    client_labels = all_labels[client_indices]
-    class_counts = np.bincount(client_labels, minlength=num_classes)
+    # Partition private data among clients (IID split)
+    samples_per_client = len(private_indices) // num_partitions
+    start_idx = partition_id * samples_per_client
+    end_idx = start_idx + samples_per_client
+    client_indices = private_indices[start_idx:end_idx]
 
     # Create dataloaders
+    # Note: num_workers=0 for Ray compatibility in simulation mode
     client_trainset = Subset(trainset, client_indices)
     trainloader = DataLoader(client_trainset, batch_size=batch_size, shuffle=True, num_workers=0)
     valloader = DataLoader(testset, batch_size=128, shuffle=False, num_workers=0)
 
-    # Print detailed data statistics
-    print(f"\n{'=' * 60}")
-    print(f"✓ Client {partition_id + 1} Data Summary:")
-    print(f"{'=' * 60}")
-    print(f"  Dataset: {dataset}")
-    print(f"  Distribution: {dist_info}")
-    print(f"  Private training samples: {len(client_trainset)}")
-    print(f"  Public unlabeled samples (shared): {unlabeled_size}")
-    print(f"  Test samples: {len(testset)}")
-    print(f"\n  Class Distribution:")
-    for class_id, count in enumerate(class_counts):
-        percentage = (count / len(client_labels)) * 100
-        print(f"    Class {class_id}: {count:4d} samples ({percentage:5.1f}%)")
-    print(f"{'=' * 60}\n")
+    # Print detailed data statistics (suppressed to avoid Ray actor clutter)
+    # Only printed in direct execution mode, not in Flower simulation
+    # print(f"✓ Client {partition_id + 1} Data Summary:")
+    # print(f"  - Dataset: {dataset}")
+    # print(f"  - Private training samples: {len(client_trainset)}")
+    # print(f"  - Public unlabeled samples (shared): {unlabeled_size}")
+    # print(f"  - Test samples (full test set): {len(testset)}")
+    # print(f"  - Total training samples: {len(trainset)}")
+    # print(f"  - Samples used for public unlabeled: {unlabeled_size}")
+    # print(f"  - Samples distributed to {num_partitions} clients: {len(private_indices)}")
 
     return trainloader, valloader, public_dataset
 
@@ -526,6 +383,7 @@ def predict_on_unlabeled(net, public_dataset, device: torch.device) -> List[int]
     net.to(device)
     net.eval()
 
+    # Note: num_workers=0 for Ray compatibility in simulation mode
     dataloader = DataLoader(
         public_dataset,
         batch_size=len(public_dataset),

@@ -35,18 +35,62 @@ serverapp = "fedcot.server_app:app"
 clientapp = "fedcot.client_app:app"
 
 [tool.flwr.app.config]
+# === TRAINING CONFIGURATION ===
 num-communication-rounds = 25     # Number of communication rounds
 num-clients = 5                   # Number of clients participating
-num-local-rounds = 4             # Number of local rounds (passes through dataset) before communication
-unlabeled-size = 100              # Size of public unlabeled dataset (shared across all clients)
+num-local-rounds = 4              # Number of local rounds before communication
+unlabeled-size = 100              # Size of public unlabeled dataset
+
+# === DATASET CONFIGURATION ===
 dataset = "CIFAR10"               # Dataset: CIFAR10 or FashionMNIST
-optimizer = "SGD"                 # Optimizer: SGD or Adam
-learning-rate = 0.01              # Learning rate
-private-batch-size = 32           # Batch size for private data
+
+# === DATA DISTRIBUTION ===
+# Options: "iid", "non-iid-dirichlet", "non-iid-shards"
+data-distribution = "iid"
+
+# For non-iid-dirichlet: Lower alpha = more non-IID
+# Examples: 0.1 (highly non-IID), 0.5 (moderately non-IID), 1.0 (less non-IID)
+alpha = 0.1
+
+# For non-iid-shards: Number of class shards per client
+shards-per-client = 2
+
+# === OPTIMIZER CONFIGURATION ===
+optimizer = "Adam"                # Optimizer: SGD or Adam
+learning-rate = 0.001             # Learning rate
+private-batch-size = 64           # Batch size for private data
 public-batch-size = 32            # Batch size for public pseudo-labeled data
+
+# === CLIENT STATE PERSISTENCE ===
+save-checkpoints = true           # Save client model checkpoints
+checkpoint-dir = "./checkpoints"  # Directory to save checkpoints
 
 [tool.flwr.federations]
 default = "local-simulation"
 
 [tool.flwr.federations.local-simulation]
-options.num-supernodes = 5  # Should match num-clients in run-config (modify if using more clients)
+options.num-supernodes = 5
+options.backend.init_args.logging_level = 40
+options.backend.init_args.log_to_driver = false
+
+# ============================================================================
+# EXAMPLE CONFIGURATIONS FOR DIFFERENT SCENARIOS
+# ============================================================================
+
+# === IID CONFIGURATION (Balanced data distribution) ===
+[tool.flwr.app.config.iid-example]
+data-distribution = "iid"
+num-clients = 5
+alpha = 1.0  # Not used for IID
+
+# === NON-IID DIRICHLET (Statistical heterogeneity) ===
+[tool.flwr.app.config.non-iid-dirichlet-example]
+data-distribution = "non-iid-dirichlet"
+alpha = 0.1  # 0.1 = highly non-IID, 0.5 = moderately, 1.0 = less non-IID
+num-clients = 5
+
+# === NON-IID SHARDS (Class-based heterogeneity) ===
+[tool.flwr.app.config.non-iid-shards-example]
+data-distribution = "non-iid-shards"
+shards-per-client = 2  # Each client gets 2 class shards
+num-clients = 5
