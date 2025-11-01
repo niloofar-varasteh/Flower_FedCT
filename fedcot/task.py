@@ -357,28 +357,40 @@ def load_data(partition_id: int, num_partitions: int = 5, unlabeled_size: int = 
     class_counts = np.bincount(client_labels, minlength=num_classes)
 
     # Create dataloaders
+    # Note: num_workers=0 for Ray compatibility in simulation mode
+    # Create dataloaders
+    # Note: num_workers=0 for Ray compatibility in simulation mode
     client_trainset = Subset(trainset, client_indices)
     trainloader = DataLoader(client_trainset, batch_size=batch_size, shuffle=True, num_workers=0)
     valloader = DataLoader(testset, batch_size=128, shuffle=False, num_workers=0)
 
-    # Print detailed data statistics
+    # Analyze class distribution for this client
+    if hasattr(trainset, 'targets'):
+        all_labels = np.array(trainset.targets)
+    elif hasattr(trainset, 'labels'):
+        all_labels = np.array(trainset.labels)
+    else:
+        all_labels = np.array([trainset[i][1] for i in range(len(trainset))])
+
+    client_labels = all_labels[client_indices]
+    class_counts = np.bincount(client_labels, minlength=num_classes)
+
+    # Print detailed data statistics with distribution info
     print(f"\n{'=' * 60}")
     print(f"✓ Client {partition_id + 1} Data Summary:")
     print(f"{'=' * 60}")
     print(f"  Dataset: {dataset}")
-    print(f"  Distribution: {dist_info}")
+    print(f"  Distribution: {dist_info}")  # ← CHANGED from "IID (default)"
     print(f"  Private training samples: {len(client_trainset)}")
     print(f"  Public unlabeled samples (shared): {unlabeled_size}")
     print(f"  Test samples: {len(testset)}")
     print(f"\n  Class Distribution:")
     for class_id, count in enumerate(class_counts):
-        percentage = (count / len(client_labels)) * 100
+        percentage = (count / len(client_labels)) * 100 if len(client_labels) > 0 else 0
         print(f"    Class {class_id}: {count:4d} samples ({percentage:5.1f}%)")
     print(f"{'=' * 60}\n")
 
     return trainloader, valloader, public_dataset
-
-
 # ============================================================================
 # TRAINING FUNCTIONS
 # ============================================================================

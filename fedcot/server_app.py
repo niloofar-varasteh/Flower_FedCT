@@ -87,25 +87,24 @@ class FedCTStrategy(Strategy):
         )
 
         # Prepare configuration for each client
-        # Assign logical partition IDs (0 to num_clients-1) to handle case where
-        # num-supernodes > num-clients
         config_list = []
         for idx, client in enumerate(clients):
-            config = {
+            # Create config dict for this client
+            client_config = {
                 "optimizer": self.optimizer,
                 "learning_rate": self.learning_rate,
-                "logical_partition_id": idx,  # Logical ID for data partitioning
+                "logical_partition_id": idx,
             }
 
-            # Send consensus labels if available (at start of communication cycle)
+            # Send consensus labels if available
             if self.previous_consensus is not None:
-                config["consensus_labels"] = ",".join(map(str, self.previous_consensus))
+                client_config["consensus_labels"] = ",".join(map(str, self.previous_consensus))
 
             # Check if this is the last local round before communication
             is_communication_round = (self.local_round_counter % self.num_local_rounds == 0)
-            config["make_predictions"] = is_communication_round
+            client_config["make_predictions"] = is_communication_round
 
-            fit_ins = FitIns(parameters=parameters, config=config)
+            fit_ins = FitIns(parameters=parameters, config=client_config)
             config_list.append((client, fit_ins))
 
         return config_list

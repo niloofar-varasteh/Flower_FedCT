@@ -179,6 +179,12 @@ class FedCTClient(NumPyClient):
             if not self.data_loaded:
                 logical_partition_id = config.get("logical_partition_id", self.partition_id)
 
+                # DEBUG: Print what we're passing
+                print(f"\n🔧 DEBUG Client {logical_partition_id + 1}:")
+                print(f"   data_distribution = {self.data_distribution}")
+                print(f"   alpha = {self.alpha}")
+                print(f"   shards_per_client = {self.shards_per_client}")
+
                 # Load data with distribution type
                 self.trainloader, self.valloader, self.public_dataset = load_data(
                     partition_id=logical_partition_id,
