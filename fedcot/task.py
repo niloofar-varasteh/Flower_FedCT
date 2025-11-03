@@ -326,15 +326,17 @@ def load_data(partition_id: int, num_partitions: int = 5, unlabeled_size: int = 
     public_dataset = UnlabeledDataset(trainset, public_indices)
 
     # Partition private data based on distribution type
-    if data_distribution.lower() == "iid":
+    dist_lower = data_distribution.lower()
+    if dist_lower == "iid":
         partitions = partition_data_iid(private_indices, num_partitions)
         dist_info = "IID"
-    elif data_distribution.lower() == "non-iid-dirichlet":
+    elif dist_lower == "non-iid-dirichlet":
+        alpha = float(alpha) if alpha is not None else 0.5
         partitions = partition_data_non_iid_dirichlet(
             trainset, private_indices, num_partitions, num_classes, alpha
         )
         dist_info = f"Non-IID (Dirichlet α={alpha})"
-    elif data_distribution.lower() == "non-iid-shards":
+    elif dist_lower == "non-iid-shards":
         partitions = partition_data_non_iid_shards(
             trainset, private_indices, num_partitions, shards_per_client
         )

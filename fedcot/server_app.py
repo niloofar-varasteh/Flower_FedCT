@@ -281,31 +281,29 @@ class FedCTStrategy(Strategy):
 
 
 def server_fn(context: Context):
-    """
-    Create server components for Flower
+    """Create server components for Flower"""
+    # ---- read everything from run_config INSIDE this function
+    rc = context.run_config
 
-    Args:
-        context: Flower context with run configuration
+    num_communication_rounds = rc.get("num-communication-rounds", 10)
+    num_clients = rc.get("num-clients", 5)
+    num_local_rounds = rc.get("num-local-rounds", 2)
+    optimizer = rc.get("optimizer", "SGD")
+    learning_rate = rc.get("learning-rate", 0.01)
+    unlabeled_size = rc.get("unlabeled-size", 100)
+    dataset = rc.get("dataset", "CIFAR10")
 
-    Returns:
-        ServerAppComponents with strategy and config
-    """
-    # Get configuration from run_config
-    num_communication_rounds = context.run_config.get("num-communication-rounds", 10)
-    num_clients = context.run_config.get("num-clients", 5)
-    num_local_rounds = context.run_config.get("num-local-rounds", 2)
-    optimizer = context.run_config.get("optimizer", "SGD")
-    learning_rate = context.run_config.get("learning-rate", 0.01)
-    unlabeled_size = context.run_config.get("unlabeled-size", 100)
-    dataset = context.run_config.get("dataset", "CIFAR10")
+    # اختیاری: فقط برای لاگ/اطلاع (سرور به آن نیاز مستقیم ندارد)
+    data_distribution = rc.get("data-distribution", "iid")
+    alpha = rc.get("alpha", 0.5)
+    shards_per_client = rc.get("shards-per-client", 2)
 
-    # Calculate total Flower server rounds (local rounds × communication rounds)
     total_server_rounds = num_communication_rounds * num_local_rounds
 
     print(f"\n{'=' * 80}")
     print("FEDERATED CO-TRAINING (FedCT) - FLOWER IMPLEMENTATION")
     print(f"{'=' * 80}")
-    print(f"Configuration:")
+    print("Configuration:")
     print(f"  Dataset:                       {dataset}")
     print(f"  Num communication rounds:      {num_communication_rounds}")
     print(f"  Number of clients:             {num_clients}")
@@ -314,6 +312,11 @@ def server_fn(context: Context):
     print(f"  Optimizer:                     {optimizer}")
     print(f"  Learning rate:                 {learning_rate}")
     print(f"  Unlabeled size:                {unlabeled_size}")
+    print(f"  Data distribution:             {data_distribution}")
+    if str(data_distribution).lower() == "non-iid-dirichlet":
+        print(f"  Dirichlet alpha:               {alpha}")
+    elif str(data_distribution).lower() == "non-iid-shards":
+        print(f"  Shards per client:             {shards_per_client}")
     print(f"{'=' * 80}\n")
 
     # Create strategy
@@ -322,13 +325,15 @@ def server_fn(context: Context):
         num_local_rounds=num_local_rounds,
         optimizer=optimizer,
         learning_rate=learning_rate,
-        num_communication_rounds=num_communication_rounds
+        num_communication_rounds=num_communication_rounds,
     )
 
     # Create server config with total rounds
     config = ServerConfig(num_rounds=total_server_rounds, round_timeout=None)
-
     return ServerAppComponents(strategy=strategy, config=config)
+
+
+
 
 
 # Create Flower ServerApp

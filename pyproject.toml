@@ -72,3 +72,5 @@ default = "local-simulation"
 options.num-supernodes = 5
 options.backend.init_args.logging_level = 20
 options.backend.init_args.log_to_driver = true
+#(options.backend.init_args.logging_level = 30   # 20=INFO → 30=WARNING
+#options.backend.init_args.log_to_driver = false)
