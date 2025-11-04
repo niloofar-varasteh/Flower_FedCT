@@ -11,6 +11,17 @@ from collections import Counter
 from typing import List, Dict, Optional, Tuple, Union
 from flwr.common import FitRes, Parameters, Scalar, ndarrays_to_parameters
 from flwr.server.client_proxy import ClientProxy
+import logging
+import sys
+
+# Configure logging to ensure output is visible
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s',
+    stream=sys.stdout,
+    force=True
+)
+logger = logging.getLogger(__name__)
 
 
 class FedCTStrategy(Strategy):
@@ -59,7 +70,7 @@ class FedCTStrategy(Strategy):
         Configure clients for one local training round
 
         Args:
-            server_round: Current Flower server round number
+            server_round: Current Flower server round number (sequential: 1, 2, 3, ...)
             parameters: Model parameters (empty for FedCT)
             client_manager: Flower client manager
 
@@ -73,12 +84,13 @@ class FedCTStrategy(Strategy):
         # Check if this is the start of a new communication cycle
         if (self.local_round_counter - 1) % self.num_local_rounds == 0:
             self.comm_round_counter += 1
-            print(f"\n{'=' * 80}")
-            print(f"📊 COMMUNICATION CYCLE {self.comm_round_counter}/{self.num_communication_rounds}")
-            print(f"{'=' * 80}")
-            print(f"→ Clients will do {self.num_local_rounds} local training rounds")
-            print(f"→ Then share predictions on public dataset")
-            print(f"{'=' * 80}")
+            logger.info(f"\n{'=' * 80}")
+            logger.info(
+                f"📊 COMMUNICATION CYCLE {self.comm_round_counter}/{self.num_communication_rounds} (Flower Round {server_round})")
+            logger.info(f"{'=' * 80}")
+            logger.info(f"→ Clients will do {self.num_local_rounds} local training rounds")
+            logger.info(f"→ Then share predictions on public dataset")
+            logger.info(f"{'=' * 80}")
 
         # Sample all clients
         clients = client_manager.sample(
@@ -87,24 +99,25 @@ class FedCTStrategy(Strategy):
         )
 
         # Prepare configuration for each client
+        # Assign logical partition IDs (0 to num_clients-1) to handle case where
+        # num-supernodes > num-clients
         config_list = []
         for idx, client in enumerate(clients):
-            # Create config dict for this client
-            client_config = {
+            config = {
                 "optimizer": self.optimizer,
                 "learning_rate": self.learning_rate,
-                "logical_partition_id": idx,
+                "logical_partition_id": idx,  # Logical ID for data partitioning
             }
 
-            # Send consensus labels if available
+            # Send consensus labels if available (at start of communication cycle)
             if self.previous_consensus is not None:
-                client_config["consensus_labels"] = ",".join(map(str, self.previous_consensus))
+                config["consensus_labels"] = ",".join(map(str, self.previous_consensus))
 
             # Check if this is the last local round before communication
             is_communication_round = (self.local_round_counter % self.num_local_rounds == 0)
-            client_config["make_predictions"] = is_communication_round
+            config["make_predictions"] = is_communication_round
 
-            fit_ins = FitIns(parameters=parameters, config=client_config)
+            fit_ins = FitIns(parameters=parameters, config=config)
             config_list.append((client, fit_ins))
 
         return config_list
@@ -130,33 +143,50 @@ class FedCTStrategy(Strategy):
         # Check if this is a communication round
         is_communication_round = (self.local_round_counter % self.num_local_rounds == 0)
 
-        # Always print local round completion message
+        # Calculate position within current communication cycle
         local_within_cycle = ((self.local_round_counter - 1) % self.num_local_rounds) + 1
-        print(
-            f"✓ Local Round {local_within_cycle}/{self.num_local_rounds}: Training completed (metrics shared only at communication rounds)")
+
+        # Collect metrics from all clients (always available now)
+        client_metrics = {}
+        for i, (_, fit_res) in enumerate(results):
+            client_metrics[i] = {
+                "train_loss": fit_res.metrics.get("train_loss", 0.0),
+                "train_acc": fit_res.metrics.get("train_acc", 0.0),
+                "test_loss": fit_res.metrics.get("test_loss", 0.0),
+                "test_acc": fit_res.metrics.get("test_acc", 0.0),
+            }
+
+        # Calculate and display average metrics at every local round
+        if client_metrics:
+            train_accs = [m["train_acc"] for m in client_metrics.values()]
+            test_accs = [m["test_acc"] for m in client_metrics.values()]
+            train_losses = [m["train_loss"] for m in client_metrics.values()]
+            test_losses = [m["test_loss"] for m in client_metrics.values()]
+
+            avg_train_acc = np.mean(train_accs)
+            avg_test_acc = np.mean(test_accs)
+            avg_train_loss = np.mean(train_losses)
+            avg_test_loss = np.mean(test_losses)
+
+            logger.info(f"✓ Local Round {local_within_cycle}/{self.num_local_rounds} [Flower Round {server_round}]: "
+                        f"Train Loss: {avg_train_loss:.4f}, Train Acc: {avg_train_acc:.4f}, "
+                        f"Test Loss: {avg_test_loss:.4f}, Test Acc: {avg_test_acc:.4f}")
 
         # If this is a communication round, also do majority voting
         if is_communication_round:
-            print(f"\n{'=' * 80}")
-            print(
+            logger.info(f"\n{'=' * 80}")
+            logger.info(
                 f"🗳️  COMMUNICATION ROUND {self.comm_round_counter}/{self.num_communication_rounds} - MAJORITY VOTING")
-            print(f"{'=' * 80}")
+            logger.info(f"{'=' * 80}")
 
-            # Extract predictions and metrics from all clients
+            # Extract predictions from all clients
             client_predictions = {}
-            client_metrics = {}
 
             for i, (_, fit_res) in enumerate(results):
                 predictions_str = fit_res.metrics.get("predictions", "")
                 if predictions_str:  # Only process if we have predictions
                     predictions = [int(x) for x in predictions_str.split(",")]
                     client_predictions[i] = predictions
-                    client_metrics[i] = {
-                        "train_loss": fit_res.metrics.get("train_loss", 0.0),
-                        "train_acc": fit_res.metrics.get("train_acc", 0.0),
-                        "test_loss": fit_res.metrics.get("test_loss", 0.0),
-                        "test_acc": fit_res.metrics.get("test_acc", 0.0),
-                    }
 
             # Perform majority voting
             if client_predictions:
@@ -234,38 +264,39 @@ class FedCTStrategy(Strategy):
         """
         num_samples = len(consensus)
 
-        print(f"\n{'-' * 80}")
-        print("MAJORITY VOTING RESULTS:")
-        print(f"{'-' * 80}")
-        print(f"Consensus Labels (L̄_t) - {num_samples} samples:")
+        logger.info(f"\n{'-' * 80}")
+        logger.info("MAJORITY VOTING RESULTS:")
+        logger.info(f"{'-' * 80}")
+        logger.info(f"Consensus Labels (L̄_t) - {num_samples} samples:")
         if num_samples <= 20:
-            print(f"  {consensus}")
+            logger.info(f"  {consensus}")
         else:
-            print(f"  {consensus[:20]}... (showing first 20)")
+            logger.info(f"  {consensus[:20]}... (showing first 20)")
 
-        print(f"\nAgreement Statistics:")
-        print(f"  Mean Agreement: {stats['mean_agreement']:.3f}")
-        print(f"  Min Agreement:  {stats['min_agreement']:.3f}")
-        print(f"  Max Agreement:  {stats['max_agreement']:.3f}")
-        print(f"  Unanimous:      {int(stats['unanimous'])}/{num_samples}")
-        print(f"  Labels Changed: {int(stats['changed'])}/{num_samples}")
+        logger.info(f"\nAgreement Statistics:")
+        logger.info(f"  Mean Agreement: {stats['mean_agreement']:.3f}")
+        logger.info(f"  Min Agreement:  {stats['min_agreement']:.3f}")
+        logger.info(f"  Max Agreement:  {stats['max_agreement']:.3f}")
+        logger.info(f"  Unanimous:      {int(stats['unanimous'])}/{num_samples}")
+        logger.info(f"  Labels Changed: {int(stats['changed'])}/{num_samples}")
 
-        print(f"\nClient Performance Summary:")
+        logger.info(f"\nClient Performance Summary:")
         test_accs = [m["test_acc"] for m in client_metrics.values()]
         train_accs = [m["train_acc"] for m in client_metrics.values()]
         test_losses = [m["test_loss"] for m in client_metrics.values()]
         train_losses = [m["train_loss"] for m in client_metrics.values()]
 
         for cid, metrics in client_metrics.items():
-            print(f"  Client {cid + 1}: Train Loss={metrics['train_loss']:.4f}, Train Acc={metrics['train_acc']:.4f}, "
-                  f"Test Loss={metrics['test_loss']:.4f}, Test Acc={metrics['test_acc']:.4f}")
+            logger.info(
+                f"  Client {cid + 1}: Train Loss={metrics['train_loss']:.4f}, Train Acc={metrics['train_acc']:.4f}, "
+                f"Test Loss={metrics['test_loss']:.4f}, Test Acc={metrics['test_acc']:.4f}")
 
-        print(f"\n  Average Train Loss: {np.mean(train_losses):.4f} ± {np.std(train_losses):.4f}")
-        print(f"  Average Train Acc:  {np.mean(train_accs):.4f} ± {np.std(train_accs):.4f}")
-        print(f"  Average Test Loss:  {np.mean(test_losses):.4f} ± {np.std(test_losses):.4f}")
-        print(f"  Average Test Acc:   {np.mean(test_accs):.4f} ± {np.std(test_accs):.4f}")
+        logger.info(f"\n  Average Train Loss: {np.mean(train_losses):.4f} ± {np.std(train_losses):.4f}")
+        logger.info(f"  Average Train Acc:  {np.mean(train_accs):.4f} ± {np.std(train_accs):.4f}")
+        logger.info(f"  Average Test Loss:  {np.mean(test_losses):.4f} ± {np.std(test_losses):.4f}")
+        logger.info(f"  Average Test Acc:   {np.mean(test_accs):.4f} ± {np.std(test_accs):.4f}")
 
-        print(f"{'=' * 80}\n")
+        logger.info(f"{'=' * 80}\n")
 
     def configure_evaluate(self, server_round, parameters, client_manager):
         """Configure evaluation (not used in FedCT)"""
@@ -281,43 +312,43 @@ class FedCTStrategy(Strategy):
 
 
 def server_fn(context: Context):
-    """Create server components for Flower"""
-    # ---- read everything from run_config INSIDE this function
-    rc = context.run_config
+    """
+    Create server components for Flower
 
-    num_communication_rounds = rc.get("num-communication-rounds", 10)
-    num_clients = rc.get("num-clients", 5)
-    num_local_rounds = rc.get("num-local-rounds", 2)
-    optimizer = rc.get("optimizer", "SGD")
-    learning_rate = rc.get("learning-rate", 0.01)
-    unlabeled_size = rc.get("unlabeled-size", 100)
-    dataset = rc.get("dataset", "CIFAR10")
+    Args:
+        context: Flower context with run configuration
 
-    # اختیاری: فقط برای لاگ/اطلاع (سرور به آن نیاز مستقیم ندارد)
-    data_distribution = rc.get("data-distribution", "iid")
-    alpha = rc.get("alpha", 0.5)
-    shards_per_client = rc.get("shards-per-client", 2)
+    Returns:
+        ServerAppComponents with strategy and config
+    """
+    # Get configuration from run_config
+    num_communication_rounds = context.run_config.get("num-communication-rounds", 10)
+    num_clients = context.run_config.get("num-clients", 5)
+    num_local_rounds = context.run_config.get("num-local-rounds", 2)
+    optimizer = context.run_config.get("optimizer", "SGD")
+    learning_rate = context.run_config.get("learning-rate", 0.01)
+    unlabeled_size = context.run_config.get("unlabeled-size", 100)
+    dataset = context.run_config.get("dataset", "CIFAR10")
 
+    # Calculate total Flower server rounds (local rounds × communication rounds)
     total_server_rounds = num_communication_rounds * num_local_rounds
 
-    print(f"\n{'=' * 80}")
-    print("FEDERATED CO-TRAINING (FedCT) - FLOWER IMPLEMENTATION")
-    print(f"{'=' * 80}")
-    print("Configuration:")
-    print(f"  Dataset:                       {dataset}")
-    print(f"  Num communication rounds:      {num_communication_rounds}")
-    print(f"  Number of clients:             {num_clients}")
-    print(f"  Num local rounds:              {num_local_rounds}")
-    print(f"  Total Flower server rounds:    {total_server_rounds}")
-    print(f"  Optimizer:                     {optimizer}")
-    print(f"  Learning rate:                 {learning_rate}")
-    print(f"  Unlabeled size:                {unlabeled_size}")
-    print(f"  Data distribution:             {data_distribution}")
-    if str(data_distribution).lower() == "non-iid-dirichlet":
-        print(f"  Dirichlet alpha:               {alpha}")
-    elif str(data_distribution).lower() == "non-iid-shards":
-        print(f"  Shards per client:             {shards_per_client}")
-    print(f"{'=' * 80}\n")
+    logger.info(f"\n{'=' * 80}")
+    logger.info("FEDERATED CO-TRAINING (FedCT) - FLOWER IMPLEMENTATION")
+    logger.info(f"{'=' * 80}")
+    logger.info(f"Configuration:")
+    logger.info(f"  Dataset:                       {dataset}")
+    logger.info(f"  Num communication rounds:      {num_communication_rounds}")
+    logger.info(f"  Number of clients:             {num_clients}")
+    logger.info(f"  Num local rounds per cycle:    {num_local_rounds}")
+    logger.info(f"  Total Flower server rounds:    {total_server_rounds}")
+    logger.info(f"  Optimizer:                     {optimizer}")
+    logger.info(f"  Learning rate:                 {learning_rate}")
+    logger.info(f"  Unlabeled size:                {unlabeled_size}")
+    logger.info(f"\n  Note: Flower counts rounds sequentially (1,2,3,...)")
+    logger.info(f"        We organize them into {num_communication_rounds} communication cycles")
+    logger.info(f"        Each cycle has {num_local_rounds} local training rounds")
+    logger.info(f"{'=' * 80}\n")
 
     # Create strategy
     strategy = FedCTStrategy(
@@ -325,15 +356,13 @@ def server_fn(context: Context):
         num_local_rounds=num_local_rounds,
         optimizer=optimizer,
         learning_rate=learning_rate,
-        num_communication_rounds=num_communication_rounds,
+        num_communication_rounds=num_communication_rounds
     )
 
     # Create server config with total rounds
     config = ServerConfig(num_rounds=total_server_rounds, round_timeout=None)
+
     return ServerAppComponents(strategy=strategy, config=config)
-
-
-
 
 
 # Create Flower ServerApp

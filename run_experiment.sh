@@ -26,15 +26,15 @@
 #   -h, --help                    Show this help message
 ################################################################################
 
-# Default parameters
-NUM_COMMUNICATION_ROUNDS=10
+# Default parameters (optimized for better performance)
+NUM_COMMUNICATION_ROUNDS=15
 NUM_CLIENTS=5
-NUM_LOCAL_ROUNDS=2
+NUM_LOCAL_ROUNDS=3
 UNLABELED_SIZE=100
 DATASET="CIFAR10"
-OPTIMIZER="SGD"
-LEARNING_RATE=0.01
-PRIVATE_BATCH_SIZE=32
+OPTIMIZER="Adam"
+LEARNING_RATE=0.001
+PRIVATE_BATCH_SIZE=64
 PUBLIC_BATCH_SIZE=32
 
 # Color codes for output
@@ -51,14 +51,14 @@ show_help() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --communication-rounds <num>  Number of communication rounds (default: 20)"
+    echo "  --communication-rounds <num>  Number of communication rounds (default: 15)"
     echo "  -c, --clients <num>           Number of clients (default: 5)"
-    echo "  --local-rounds <num>          Number of local rounds (passes through dataset) before communication (default: 5)"
-    echo "  -u, --unlabeled <num>         Size of public unlabeled dataset (default: 500)"
+    echo "  --local-rounds <num>          Number of local rounds (passes through dataset) before communication (default: 3)"
+    echo "  -u, --unlabeled <num>         Size of public unlabeled dataset (default: 100)"
     echo "  -d, --dataset <name>          Dataset: CIFAR10 or FashionMNIST (default: CIFAR10)"
-    echo "  -o, --optimizer <name>        Optimizer: SGD or Adam (default: SGD)"
-    echo "  --lr <rate>                   Learning rate (default: 0.01)"
-    echo "  --private-batch <size>        Batch size for private data (default: 32)"
+    echo "  -o, --optimizer <name>        Optimizer: SGD or Adam (default: Adam)"
+    echo "  --lr <rate>                   Learning rate (default: 0.001)"
+    echo "  --private-batch <size>        Batch size for private data (default: 64)"
     echo "  --public-batch <size>         Batch size for public pseudo-labeled data (default: 32)"
     echo "  -h, --help                    Show this help message"
     echo ""
@@ -70,9 +70,10 @@ show_help() {
     echo "    * One batch from public pseudo-labeled data (size: public-batch)"
     echo ""
     echo "Examples:"
-    echo "  $0 --communication-rounds 20 --local-rounds 5"
-    echo "  $0 --dataset FashionMNIST --optimizer Adam --lr 0.001"
-    echo "  $0 --communication-rounds 20 -c 5 --local-rounds 5 --private-batch 64 --public-batch 32"
+    echo "  $0                                                    # Use default settings (Adam, lr=0.001)"
+    echo "  $0 --communication-rounds 20 --local-rounds 5         # More training rounds"
+    echo "  $0 --dataset FashionMNIST                             # Try different dataset"
+    echo "  $0 --optimizer SGD --lr 0.01                          # Use SGD instead of Adam"
     exit 0
 }
 

@@ -18,9 +18,9 @@ import torch
 import numpy as np
 
 
-def run_fedcot_experiment(num_communication_rounds=20, num_clients=5, num_local_rounds=5, unlabeled_size=500,
-                         dataset="CIFAR10", optimizer="SGD", learning_rate=0.01,
-                         private_batch_size=32, public_batch_size=32):
+def run_fedcot_experiment(num_communication_rounds=15, num_clients=5, num_local_rounds=3, unlabeled_size=100,
+                         dataset="CIFAR10", optimizer="Adam", learning_rate=0.001,
+                         private_batch_size=64, public_batch_size=32):
     """
     Run FedCT experiment without Ray simulation
     
@@ -90,9 +90,8 @@ def run_fedcot_experiment(num_communication_rounds=20, num_clients=5, num_local_
         print(f"→ Then share predictions on public dataset")
         print("=" * 80)
         
-        # Store metrics from last local round for reporting at communication round
-        last_train_losses = {}
-        last_train_accs = {}
+        # Store metrics from each local round
+        last_round_metrics = {}
         
         # Perform num_local_rounds before each communication
         for local_round in range(1, num_local_rounds + 1):
@@ -113,7 +112,12 @@ def run_fedcot_experiment(num_communication_rounds=20, num_clients=5, num_local_
                 else:
                     public_loaders[client_id] = None
             
-            # Train all clients for 1 epoch (no evaluation during local rounds)
+            # Train all clients for 1 epoch and evaluate to get metrics at every local round
+            local_train_losses = []
+            local_train_accs = []
+            local_test_losses = []
+            local_test_accs = []
+            
             for client in clients:
                 client_id = client['id']
                 
@@ -128,21 +132,42 @@ def run_fedcot_experiment(num_communication_rounds=20, num_clients=5, num_local_
                     public_loader=public_loaders[client_id]
                 )
                 
-                # Store metrics from this round (will use last round's metrics at communication)
-                last_train_losses[client_id] = train_loss
-                last_train_accs[client_id] = train_acc
+                # Evaluate on test set at every local round
+                test_loss, test_acc = test(
+                    client['model'], client['valloader'], device
+                )
+                
+                # Store metrics from this round (for later use at communication round)
+                last_round_metrics[client_id] = {
+                    'train_loss': train_loss,
+                    'train_acc': train_acc,
+                    'test_loss': test_loss,
+                    'test_acc': test_acc
+                }
+                
+                # Collect for averaging
+                local_train_losses.append(train_loss)
+                local_train_accs.append(train_acc)
+                local_test_losses.append(test_loss)
+                local_test_accs.append(test_acc)
             
-            # Just acknowledge training completion (no metrics shared during local rounds)
-            print(f"✓ Local Round {local_round}/{num_local_rounds}: Training completed (metrics shared only at communication rounds)")
+            # Display average metrics at every local round
+            avg_train_loss = np.mean(local_train_losses)
+            avg_train_acc = np.mean(local_train_accs)
+            avg_test_loss = np.mean(local_test_losses)
+            avg_test_acc = np.mean(local_test_accs)
+            
+            print(f"✓ Local Round {local_round}/{num_local_rounds}: "
+                  f"Train Loss: {avg_train_loss:.4f}, Train Acc: {avg_train_acc:.4f}, "
+                  f"Test Loss: {avg_test_loss:.4f}, Test Acc: {avg_test_acc:.4f}")
         
         # After num_local_rounds, do communication
         print("\n" + "=" * 80)
         print(f"🗳️  COMMUNICATION ROUND {comm_round}/{num_communication_rounds} - MAJORITY VOTING")
         print("=" * 80)
         
-        # Collect predictions and evaluate all clients at communication round
+        # Collect predictions from all clients at communication round
         client_predictions = {}
-        client_metrics = {}
         for client in clients:
             client_id = client['id']
             
@@ -151,19 +176,9 @@ def run_fedcot_experiment(num_communication_rounds=20, num_clients=5, num_local_
                 client['model'], client['public_dataset'], device
             )
             client_predictions[client_id] = predictions
-            
-            # Evaluate on test set (only at communication rounds)
-            test_loss, test_acc = test(
-                client['model'], client['valloader'], device
-            )
-            
-            # Use metrics from last local training round
-            client_metrics[client_id] = {
-                'train_loss': last_train_losses[client_id],
-                'train_acc': last_train_accs[client_id],
-                'test_loss': test_loss,
-                'test_acc': test_acc
-            }
+        
+        # Use metrics from last local round (already evaluated above)
+        client_metrics = last_round_metrics
         
         # Perform majority voting
         consensus_labels = majority_vote(client_predictions)
@@ -239,16 +254,16 @@ def print_summary(consensus, client_predictions, client_metrics):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run FedCT experiment directly (no Ray)")
-    parser.add_argument("--communication-rounds", type=int, default=20, help="Number of communication rounds")
-    parser.add_argument("--clients", type=int, default=5, help="Number of clients")
-    parser.add_argument("--local-rounds", type=int, default=5, help="Number of local rounds (passes through dataset) before communication")
-    parser.add_argument("--unlabeled", type=int, default=500, help="Size of unlabeled dataset")
+    parser.add_argument("--communication-rounds", type=int, default=15, help="Number of communication rounds (default: 15)")
+    parser.add_argument("--clients", type=int, default=5, help="Number of clients (default: 5)")
+    parser.add_argument("--local-rounds", type=int, default=3, help="Number of local rounds (passes through dataset) before communication (default: 3)")
+    parser.add_argument("--unlabeled", type=int, default=100, help="Size of unlabeled dataset (default: 100)")
     parser.add_argument("--dataset", type=str, default="CIFAR10", choices=["CIFAR10", "FashionMNIST"], 
                         help="Dataset to use (default: CIFAR10)")
-    parser.add_argument("--optimizer", type=str, default="SGD", choices=["SGD", "Adam"], 
-                        help="Optimizer to use (default: SGD)")
-    parser.add_argument("--lr", type=float, default=0.01, help="Learning rate (default: 0.01)")
-    parser.add_argument("--private-batch-size", type=int, default=32, help="Batch size for private data (default: 32)")
+    parser.add_argument("--optimizer", type=str, default="Adam", choices=["SGD", "Adam"], 
+                        help="Optimizer to use (default: Adam)")
+    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate (default: 0.001)")
+    parser.add_argument("--private-batch-size", type=int, default=64, help="Batch size for private data (default: 64)")
     parser.add_argument("--public-batch-size", type=int, default=32, help="Batch size for public pseudo-labeled data (default: 32)")
     
     args = parser.parse_args()
