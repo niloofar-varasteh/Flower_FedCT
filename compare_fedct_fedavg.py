@@ -1,93 +1,95 @@
 import re
-import argparse
 from pathlib import Path
 import matplotlib.pyplot as plt
 
-def parse_fedavg(log_path: Path):
-    """Parse FedAvg log lines like:
-       Round 7 - Loss: 0.9025 - Accuracy: 0.7250
-    """
+# --- Utility ------------------------------------------------------
+def latest_log(root):
+    cands = sorted(Path(root).rglob("experiment.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return cands[0] if cands else None
+
+def parse_fedavg(path: Path):
     rounds, losses, accs = [], [], []
-    pat = re.compile(r"Round\s+(\d+)\s+-\s+Loss:\s+([0-9.]+)\s+-\s+Accuracy:\s+([0-9.]+)")
-    for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    pat = re.compile(r"Round\s+(\d+)\s*[-–]\s*Loss:\s*([0-9.]+)\s*[-–]\s*Accuracy:\s*([0-9.]+)")
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
         m = pat.search(line)
         if m:
-            r = int(m.group(1))
-            loss = float(m.group(2))
-            acc = float(m.group(3))
-            rounds.append(r); losses.append(loss); accs.append(acc)
+            rounds.append(int(m.group(1)))
+            losses.append(float(m.group(2)))
+            accs.append(float(m.group(3)))
+    print(f"Parsed {len(rounds)} FedAvg rounds from {path}")
     return rounds, losses, accs
 
-def parse_fedct(log_path: Path):
-    """Parse FedCT lines like:
-       ✓ Local Round 2/3 [Flower Round 41]: Train Loss: 1.5718, Train Acc: 0.4677, Test Loss: 1.6860, Test Acc: 0.4113
-       همچنین تشخیص می‌دهد پایان هر cycle کجاست (وقتی a==b).
-    """
+def parse_fedct(path: Path):
     srounds, test_losses, test_accs = [], [], []
     cycle_rounds, cycle_accs = [], []
-
     pat = re.compile(
         r"Local Round\s+(\d+)/(\d+)\s+\[Flower Round\s+(\d+)\]:.*?Test Loss:\s+([0-9.]+),\s+Test Acc:\s+([0-9.]+)"
     )
-    for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         m = pat.search(line)
-        if not m:
-            # برخی لاگ‌ها «✓» اول خط دارند؛ الگو بالا بدون آن هم کار می‌کند.
-            continue
-        a = int(m.group(1))         # local within cycle
-        b = int(m.group(2))         # local per cycle
-        R = int(m.group(3))         # Flower server round
-        tl = float(m.group(4))
-        ta = float(m.group(5))
-        srounds.append(R)
-        test_losses.append(tl)
-        test_accs.append(ta)
-        if a == b:
-            cycle_rounds.append(R)
-            cycle_accs.append(ta)
-
+        if m:
+            a, b, R = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            tl, ta = float(m.group(4)), float(m.group(5))
+            srounds.append(R)
+            test_losses.append(tl)
+            test_accs.append(ta)
+            if a == b:
+                cycle_rounds.append(R)
+                cycle_accs.append(ta)
+    print(f"Parsed {len(cycle_rounds)} FedCT communication rounds from {path}")
     return srounds, test_losses, test_accs, cycle_rounds, cycle_accs
 
+# --- Main ---------------------------------------------------------
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--fedavg-log", required=True, help="Path to FedAvg experiment.log")
-    ap.add_argument("--fedct-log", required=True, help="Path to FedCT experiment.log")
-    ap.add_argument("--out", default="fedct_vs_fedavg.png", help="Output image file")
-    ap.add_argument("--title", default="FedCT vs FedAvg (CIFAR10, 5 clients)")
-    args = ap.parse_args()
+    fav_path = latest_log("logs_fedavg")
+    fct_path = latest_log("logs")
+    if not fav_path or not fav_path.exists():
+        raise SystemExit("FedAvg log not found in logs_fedavg/")
+    if not fct_path or not fct_path.exists():
+        raise SystemExit("FedCT log not found in logs/")
 
-    fav_r, fav_l, fav_a = parse_fedavg(Path(args.fedavg_log))
-    fct_r, fct_l, fct_a, fct_cR, fct_cA = parse_fedct(Path(args.fedct_log))
+    print(f"Using FedAvg log: {fav_path}")
+    print(f"Using FedCT  log: {fct_path}")
 
-    plt.figure(figsize=(12,5))
+    fav_r, fav_l, fav_a = parse_fedavg(fav_path)
+    fct_r, fct_l, fct_a, fct_cR, fct_cA = parse_fedct(fct_path)
 
-    # ---- Loss ----
-    ax1 = plt.subplot(1,2,1)
-    if fct_r: ax1.plot(fct_r, fct_l, label="FedCT (per Flower round)")
-    if fav_r: ax1.plot(fav_r, fav_l, label="FedAvg (per round)")
-    ax1.set_title("Loss vs Round")
-    ax1.set_xlabel("Round")
+    # --- Align FedCT to communication rounds only ---
+    if fct_cR:
+        # select only end-of-cycle values for fair comparison
+        fct_r_use = list(range(1, len(fct_cR) + 1))
+        fct_a_use = fct_cA
+        # for loss, pick approximate matching indices
+        fct_l_use = [fct_l[fct_r.index(cr)] if cr in fct_r else fct_l[-1] for cr in fct_cR]
+    else:
+        fct_r_use, fct_l_use, fct_a_use = fct_r, fct_l, fct_a
+
+    fav_r_use = list(range(1, len(fav_r) + 1))
+
+    # --- Plot ---
+    plt.figure(figsize=(10, 4.5))
+
+    ax1 = plt.subplot(1, 2, 1)
+    ax1.plot(fct_r_use, fct_l_use, "o-", label="FedCT (comm rounds)")
+    ax1.plot(fav_r_use, fav_l, "o-", label="FedAvg (comm rounds)")
+    ax1.set_xlabel("Communication Round")
     ax1.set_ylabel("Loss")
     ax1.grid(True, alpha=0.3)
     ax1.legend()
 
-    # ---- Accuracy ----
-    ax2 = plt.subplot(1,2,2)
-    if fct_r: ax2.plot(fct_r, fct_a, label="FedCT (per Flower round)")
-    if fav_r: ax2.plot(fav_r, fav_a, label="FedAvg (per round)")
-    # مارکر روی پایان هر communication cycle در FedCT
-    if fct_cR:
-        ax2.scatter(fct_cR, fct_cA, s=28, marker="o", edgecolors="k", label="FedCT (end of cycle)")
-    ax2.set_title("Accuracy vs Round")
-    ax2.set_xlabel("Round")
+    ax2 = plt.subplot(1, 2, 2)
+    ax2.plot(fct_r_use, fct_a_use, "o-", label="FedCT (comm rounds)")
+    ax2.plot(fav_r_use, fav_a, "o-", label="FedAvg (comm rounds)")
+    ax2.set_xlabel("Communication Round")
     ax2.set_ylabel("Accuracy")
     ax2.grid(True, alpha=0.3)
     ax2.legend()
 
-    plt.suptitle(args.title, y=1.02)
+    plt.suptitle("FedCT vs FedAvg (aligned per communication round)", y=1.05)
     plt.tight_layout()
-    plt.savefig(args.out, dpi=220)
-    print(f"Saved plot -> {args.out}")
+    plt.savefig("fedct_vs_fedavg.png", dpi=220)
+    print("Saved plot -> fedct_vs_fedavg.png")
 
 if __name__ == "__main__":
     main()
