@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Direct execution script for FedCT that bypasses Ray simulation issues.
-This runs the clients sequentially without Ray's distributed backend.
+FIXED Direct execution script for FedCT with proper model aggregation.
 """
 
 import argparse
@@ -13,32 +12,38 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from fedcot.task import get_model, load_data, train, test, predict_on_unlabeled, create_pseudo_labeled_dataset, \
     combine_with_pseudo_labels
-from fedcot.server_app import FedCTStrategy
 from collections import Counter
 import torch
 import numpy as np
+
+
+def get_state_dict(model):
+    """Get model state dict"""
+    return {k: v.cpu().clone() for k, v in model.state_dict().items()}
+
+
+def set_state_dict(model, state_dict):
+    """Set model state dict"""
+    model.load_state_dict(state_dict)
+
+
+def average_state_dicts(state_dicts):
+    """Average multiple state dicts (FedAvg aggregation)"""
+    avg_state = {}
+    for key in state_dicts[0].keys():
+        avg_state[key] = torch.stack([sd[key] for sd in state_dicts]).mean(dim=0)
+    return avg_state
 
 
 def run_fedcot_experiment(num_communication_rounds=15, num_clients=5, num_local_rounds=3, unlabeled_size=100,
                           dataset="CIFAR10", optimizer="Adam", learning_rate=0.001,
                           private_batch_size=64, public_batch_size=32):
     """
-    Run FedCT experiment without Ray simulation
-
-    Args:
-        num_communication_rounds: Number of communication rounds
-        num_clients: Number of clients
-        num_local_rounds: Number of local rounds (passes through dataset) before each communication
-        unlabeled_size: Size of public unlabeled dataset
-        dataset: Dataset to use - "CIFAR10" or "FashionMNIST"
-        optimizer: Optimizer to use - "SGD" or "Adam"
-        learning_rate: Learning rate for optimizer
-        private_batch_size: Batch size for private data sampling
-        public_batch_size: Batch size for public pseudo-labeled data sampling
+    Run FedCT experiment with PROPER model aggregation
     """
 
     print("=" * 80)
-    print("FEDERATED CO-TRAINING (FedCT) - DIRECT EXECUTION")
+    print("FEDERATED CO-TRAINING (FedCT) - FIXED VERSION WITH MODEL AGGREGATION")
     print("=" * 80)
     print(f"Configuration:")
     print(f"  Dataset:                       {dataset}")
@@ -57,6 +62,9 @@ def run_fedcot_experiment(num_communication_rounds=15, num_clients=5, num_local_
     print(f"Using device: {device}")
     print()
 
+    # Initialize global model
+    global_model = get_model(dataset=dataset)
+
     # Initialize clients
     clients = []
     for client_id in range(num_clients):
@@ -68,124 +76,112 @@ def run_fedcot_experiment(num_communication_rounds=15, num_clients=5, num_local_
             batch_size=private_batch_size
         )
 
+        # Each client gets a copy of the global model
         model = get_model(dataset=dataset)
+        model.load_state_dict(global_model.state_dict())
+
         clients.append({
             'id': client_id,
             'model': model,
             'trainloader': trainloader,
             'valloader': valloader,
             'public_dataset': public_dataset,
-            'pseudo_loader': None
         })
         print()
 
     # Training loop
     consensus_labels = None
-    local_round_counter = 0
 
     for comm_round in range(1, num_communication_rounds + 1):
         print("\n" + "=" * 80)
-        print(f"📊 COMMUNICATION CYCLE {comm_round}/{num_communication_rounds}")
-        print("=" * 80)
-        print(f"→ Clients will do {num_local_rounds} local training rounds")
-        print(f"→ Then share predictions on public dataset")
+        print(f"📊 COMMUNICATION ROUND {comm_round}/{num_communication_rounds}")
         print("=" * 80)
 
-        # Store metrics from each local round
-        last_round_metrics = {}
+        # ========================================
+        # STEP 1: LOCAL TRAINING
+        # ========================================
+        print(f"→ Each client will do {num_local_rounds} local epochs")
 
-        # Perform num_local_rounds before each communication
-        for local_round in range(1, num_local_rounds + 1):
-            local_round_counter += 1
+        # Update all clients with current global model
+        for client in clients:
+            client['model'].load_state_dict(global_model.state_dict())
 
-            # Update pseudo-labeled dataset for all clients if we have consensus
-            public_loaders = {}
-            for client in clients:
-                client_id = client['id']
-                if consensus_labels is not None:
-                    pseudo_dataset = create_pseudo_labeled_dataset(
-                        client['public_dataset'], consensus_labels
-                    )
-                    _, public_loader = combine_with_pseudo_labels(
-                        client['trainloader'], pseudo_dataset, public_batch_size
-                    )
-                    public_loaders[client_id] = public_loader
-                else:
-                    public_loaders[client_id] = None
-
-            # Train all clients for 1 epoch and evaluate to get metrics at every local round
-            local_train_losses = []
-            local_train_accs = []
-            local_test_losses = []
-            local_test_accs = []
-
-            for client in clients:
-                client_id = client['id']
-
-                # Train for 1 epoch with mixed batch sampling
-                train_loss, train_acc = train(
-                    client['model'],
-                    client['trainloader'],
-                    epochs=1,  # Just 1 epoch per local round
-                    device=device,
-                    optimizer_name=optimizer,
-                    learning_rate=learning_rate,
-                    public_loader=public_loaders[client_id]
+        # Prepare pseudo-labeled loaders if we have consensus
+        public_loaders = {}
+        for client in clients:
+            if consensus_labels is not None:
+                pseudo_dataset = create_pseudo_labeled_dataset(
+                    client['public_dataset'], consensus_labels
                 )
-
-                # Evaluate on test set at every local round
-                test_loss, test_acc = test(
-                    client['model'], client['valloader'], device
+                _, public_loader = combine_with_pseudo_labels(
+                    client['trainloader'], pseudo_dataset, public_batch_size
                 )
+                public_loaders[client['id']] = public_loader
+            else:
+                public_loaders[client['id']] = None
 
-                # Store metrics from this round (for later use at communication round)
-                last_round_metrics[client_id] = {
-                    'train_loss': train_loss,
-                    'train_acc': train_acc,
-                    'test_loss': test_loss,
-                    'test_acc': test_acc
-                }
-
-                # Collect for averaging
-                local_train_losses.append(train_loss)
-                local_train_accs.append(train_acc)
-                local_test_losses.append(test_loss)
-                local_test_accs.append(test_acc)
-
-            # Display average metrics at every local round
-            avg_train_loss = np.mean(local_train_losses)
-            avg_train_acc = np.mean(local_train_accs)
-            avg_test_loss = np.mean(local_test_losses)
-            avg_test_acc = np.mean(local_test_accs)
-
-            print(f"✓ Local Round {local_round}/{num_local_rounds}: "
-                  f"Train Loss: {avg_train_loss:.4f}, Train Acc: {avg_train_acc:.4f}, "
-                  f"Test Loss: {avg_test_loss:.4f}, Test Acc: {avg_test_acc:.4f}")
-
-        # After num_local_rounds, do communication
-        print("\n" + "=" * 80)
-        print(f"🗳️  COMMUNICATION ROUND {comm_round}/{num_communication_rounds} - MAJORITY VOTING")
-        print("=" * 80)
-
-        # Collect predictions from all clients at communication round
-        client_predictions = {}
+        # Train all clients locally
+        client_metrics = {}
         for client in clients:
             client_id = client['id']
 
-            # Make predictions on public dataset
+            # Local training with mixed batches (private + pseudo-labeled)
+            train_loss, train_acc = train(
+                client['model'],
+                client['trainloader'],
+                epochs=num_local_rounds,
+                device=device,
+                optimizer_name=optimizer,
+                learning_rate=learning_rate,
+                public_loader=public_loaders[client_id]
+            )
+
+            # Evaluate
+            test_loss, test_acc = test(
+                client['model'], client['valloader'], device
+            )
+
+            client_metrics[client_id] = {
+                'train_loss': train_loss,
+                'train_acc': train_acc,
+                'test_loss': test_loss,
+                'test_acc': test_acc
+            }
+
+            print(f"  Client {client_id}: Train Loss={train_loss:.4f}, Train Acc={train_acc:.4f}, "
+                  f"Test Loss={test_loss:.4f}, Test Acc={test_acc:.4f}")
+
+        # ========================================
+        # STEP 2: MODEL AGGREGATION (FedAvg)
+        # ========================================
+        print("\n🔄 AGGREGATING CLIENT MODELS (FedAvg)...")
+
+        client_states = [get_state_dict(client['model']) for client in clients]
+        aggregated_state = average_state_dicts(client_states)
+        global_model.load_state_dict(aggregated_state)
+
+        print("✓ Global model updated with averaged client weights")
+
+        # ========================================
+        # STEP 3: MAJORITY VOTING ON UNLABELED DATA
+        # ========================================
+        print("\n🗳️  MAJORITY VOTING ON PUBLIC DATASET...")
+
+        # Each client predicts on public data using their local model
+        client_predictions = {}
+        for client in clients:
             predictions = predict_on_unlabeled(
                 client['model'], client['public_dataset'], device
             )
-            client_predictions[client_id] = predictions
-
-        # Use metrics from last local round (already evaluated above)
-        client_metrics = last_round_metrics
+            client_predictions[client['id']] = predictions
 
         # Perform majority voting
         consensus_labels = majority_vote(client_predictions)
 
-        # Print summary
-        print_summary(consensus_labels, client_predictions, client_metrics)
+        # ========================================
+        # STEP 4: SUMMARY
+        # ========================================
+        print_summary(consensus_labels, client_predictions, client_metrics, comm_round)
 
     print("\n" + "=" * 80)
     print("EXPERIMENT COMPLETED")
@@ -207,7 +203,7 @@ def majority_vote(client_predictions):
     return consensus_labels
 
 
-def print_summary(consensus, client_predictions, client_metrics):
+def print_summary(consensus, client_predictions, client_metrics, comm_round):
     """Print summary of round"""
     num_samples = len(consensus)
 
@@ -222,53 +218,34 @@ def print_summary(consensus, client_predictions, client_metrics):
         agreements.append(agreement)
 
     print("-" * 80)
-    print("MAJORITY VOTING RESULTS:")
+    print(f"Round {comm_round} Summary:")
     print("-" * 80)
-    print(f"Consensus Labels (L̄_t) - {num_samples} samples:")
-    if num_samples <= 20:
-        print(f"  {consensus}")
-    else:
-        print(f"  {consensus[:20]}... (showing first 20)")
 
-    print(f"\nAgreement Statistics:")
+    print(f"\nMajority Voting Results:")
     print(f"  Mean Agreement: {np.mean(agreements):.3f}")
     print(f"  Min Agreement:  {np.min(agreements):.3f}")
     print(f"  Max Agreement:  {np.max(agreements):.3f}")
 
-    print(f"\nClient Performance Summary:")
     test_accs = [m["test_acc"] for m in client_metrics.values()]
-    train_accs = [m["train_acc"] for m in client_metrics.values()]
     test_losses = [m["test_loss"] for m in client_metrics.values()]
-    train_losses = [m["train_loss"] for m in client_metrics.values()]
 
-    for cid, metrics in client_metrics.items():
-        print(f"  Client {cid + 1}: Train Loss={metrics['train_loss']:.4f}, Train Acc={metrics['train_acc']:.4f}, "
-              f"Test Loss={metrics['test_loss']:.4f}, Test Acc={metrics['test_acc']:.4f}")
-
-    print(f"\n  Average Train Loss: {np.mean(train_losses):.4f} ± {np.std(train_losses):.4f}")
-    print(f"  Average Train Acc:  {np.mean(train_accs):.4f} ± {np.std(train_accs):.4f}")
-    print(f"  Average Test Loss:  {np.mean(test_losses):.4f} ± {np.std(test_losses):.4f}")
-    print(f"  Average Test Acc:   {np.mean(test_accs):.4f} ± {np.std(test_accs):.4f}")
-
+    print(f"\nClient Performance (after aggregation):")
+    print(f"  Average Test Loss: {np.mean(test_losses):.4f} ± {np.std(test_losses):.4f}")
+    print(f"  Average Test Acc:  {np.mean(test_accs):.4f} ± {np.std(test_accs):.4f}")
     print("=" * 80)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run FedCT experiment directly (no Ray)")
-    parser.add_argument("--communication-rounds", type=int, default=15,
-                        help="Number of communication rounds (default: 15)")
-    parser.add_argument("--clients", type=int, default=5, help="Number of clients (default: 5)")
-    parser.add_argument("--local-rounds", type=int, default=3,
-                        help="Number of local rounds (passes through dataset) before communication (default: 3)")
-    parser.add_argument("--unlabeled", type=int, default=100, help="Size of unlabeled dataset (default: 100)")
-    parser.add_argument("--dataset", type=str, default="CIFAR10", choices=["CIFAR10", "FashionMNIST"],
-                        help="Dataset to use (default: CIFAR10)")
-    parser.add_argument("--optimizer", type=str, default="Adam", choices=["SGD", "Adam"],
-                        help="Optimizer to use (default: Adam)")
-    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate (default: 0.001)")
-    parser.add_argument("--private-batch-size", type=int, default=64, help="Batch size for private data (default: 64)")
-    parser.add_argument("--public-batch-size", type=int, default=32,
-                        help="Batch size for public pseudo-labeled data (default: 32)")
+    parser = argparse.ArgumentParser(description="Run FedCT experiment with proper aggregation")
+    parser.add_argument("--communication-rounds", type=int, default=15)
+    parser.add_argument("--clients", type=int, default=5)
+    parser.add_argument("--local-rounds", type=int, default=3)
+    parser.add_argument("--unlabeled", type=int, default=100)
+    parser.add_argument("--dataset", type=str, default="CIFAR10", choices=["CIFAR10", "FashionMNIST"])
+    parser.add_argument("--optimizer", type=str, default="Adam", choices=["SGD", "Adam"])
+    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--private-batch-size", type=int, default=64)
+    parser.add_argument("--public-batch-size", type=int, default=32)
 
     args = parser.parse_args()
 

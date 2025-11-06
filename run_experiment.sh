@@ -27,7 +27,7 @@ export PYTHONIOENCODING=utf-8
 ################################################################################
 
 # Default parameters (optimized for better performance)
-NUM_COMMUNICATION_ROUNDS=15
+NUM_COMMUNICATION_ROUNDS=10
 NUM_CLIENTS=5
 NUM_LOCAL_ROUNDS=3
 UNLABELED_SIZE=100
