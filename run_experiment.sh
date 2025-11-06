@@ -1,5 +1,5 @@
 #!/bin/bash
-
+export PYTHONIOENCODING=utf-8
 ################################################################################
 # Federated Co-Training (FedCT) Experiment Runner
 #

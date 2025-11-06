@@ -4,6 +4,7 @@ Handles server-side aggregation using majority voting
 """
 
 from flwr.server import ServerApp, ServerConfig, ServerAppComponents
+from flwr.server.strategy import FedAvg
 from flwr.server.strategy import Strategy
 from flwr.common import Context
 import numpy as np

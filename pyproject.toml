@@ -35,7 +35,7 @@ serverapp = "fedcot.server_app:app"
 clientapp = "fedcot.client_app:app"
 
 [tool.flwr.app.config]
-num-communication-rounds = 20     # Number of communication rounds (optimized default)
+num-communication-rounds = 5    # Number of communication rounds (optimized default)
 num-clients = 5                   # Number of clients participating
 num-local-rounds = 4              # Number of local rounds (passes through dataset) before communication
 unlabeled-size = 100              # Size of public unlabeled dataset (shared across all clients)
