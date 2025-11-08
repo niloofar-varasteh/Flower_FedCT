@@ -27,7 +27,7 @@ export PYTHONIOENCODING=utf-8
 ################################################################################
 
 # Default parameters (optimized for better performance)
-NUM_COMMUNICATION_ROUNDS=10
+NUM_COMMUNICATION_ROUNDS=15
 NUM_CLIENTS=5
 NUM_LOCAL_ROUNDS=3
 UNLABELED_SIZE=100
@@ -164,32 +164,22 @@ echo -e "${YELLOW}Starting experiment...${NC}"
 echo -e "Logs will be saved to: ${LOG_DIR}"
 echo ""
 
-# Check if direct execution is requested
-if [ "${USE_DIRECT_EXECUTION}" = "1" ]; then
-    echo -e "${YELLOW}Using direct execution (bypassing Flower simulation)${NC}"
-    echo ""
-    
-    # Run using direct execution Python script
-    python run_direct.py \
-        --communication-rounds ${NUM_COMMUNICATION_ROUNDS} \
-        --clients ${NUM_CLIENTS} \
-        --local-rounds ${NUM_LOCAL_ROUNDS} \
-        --unlabeled ${UNLABELED_SIZE} \
-        --dataset ${DATASET} \
-        --optimizer ${OPTIMIZER} \
-        --lr ${LEARNING_RATE} \
-        --private-batch-size ${PRIVATE_BATCH_SIZE} \
-        --public-batch-size ${PUBLIC_BATCH_SIZE} \
-        2>&1 | tee "${LOG_DIR}/experiment.log"
-else
-    echo -e "${YELLOW}Using Flower framework${NC}"
-    echo -e "${YELLOW}(If you encounter Ray errors, run: export USE_DIRECT_EXECUTION=1)${NC}"
-    echo ""
-    
-    # Run using Flower framework
-    flwr run . --run-config "num-communication-rounds=${NUM_COMMUNICATION_ROUNDS} num-clients=${NUM_CLIENTS} num-local-rounds=${NUM_LOCAL_ROUNDS} unlabeled-size=${UNLABELED_SIZE} dataset=\"${DATASET}\" optimizer=\"${OPTIMIZER}\" learning-rate=${LEARNING_RATE} private-batch-size=${PRIVATE_BATCH_SIZE} public-batch-size=${PUBLIC_BATCH_SIZE}" \
-        2>&1 | tee "${LOG_DIR}/experiment.log"
-fi
+# Always use direct execution (bypassing Flower simulation)
+echo -e "${YELLOW}Using direct execution (bypassing Flower simulation)${NC}"
+echo ""
+
+# Run using direct execution Python script
+python run_direct.py \
+    --communication-rounds ${NUM_COMMUNICATION_ROUNDS} \
+    --clients ${NUM_CLIENTS} \
+    --local-rounds ${NUM_LOCAL_ROUNDS} \
+    --unlabeled ${UNLABELED_SIZE} \
+    --dataset ${DATASET} \
+    --optimizer ${OPTIMIZER} \
+    --lr ${LEARNING_RATE} \
+    --private-batch-size ${PRIVATE_BATCH_SIZE} \
+    --public-batch-size ${PUBLIC_BATCH_SIZE} \
+    2>&1 | tee "${LOG_DIR}/experiment.log"
 
 # Check if experiment completed successfully
 if [ ${PIPESTATUS[0]} -eq 0 ]; then
@@ -199,24 +189,24 @@ if [ ${PIPESTATUS[0]} -eq 0 ]; then
     echo -e "${GREEN}=================================${NC}"
     echo -e "Results saved to: ${LOG_DIR}"
     echo ""
-    
+
     # Extract and display final results
     if [ -f "${LOG_DIR}/experiment.log" ]; then
         echo -e "${BLUE}Final Results Summary:${NC}"
         echo -e "${BLUE}=================================${NC}"
-        
+
         # Extract average test accuracy from last round
         LAST_ROUND_ACC=$(grep -oP "Average Test Acc:\s+\K[0-9.]+(?=\s+±)" "${LOG_DIR}/experiment.log" | tail -1)
         if [ ! -z "$LAST_ROUND_ACC" ]; then
             echo -e "Average Test Accuracy (final): ${GREEN}${LAST_ROUND_ACC}${NC}"
         fi
-        
+
         # Extract agreement statistics from last round
         LAST_AGREEMENT=$(grep -oP "Mean Agreement:\s+\K[0-9.]+" "${LOG_DIR}/experiment.log" | tail -1)
         if [ ! -z "$LAST_AGREEMENT" ]; then
             echo -e "Mean Agreement (final):        ${GREEN}${LAST_AGREEMENT}${NC}"
         fi
-        
+
         echo -e "${BLUE}=================================${NC}"
     fi
 else
@@ -227,4 +217,3 @@ else
     echo -e "Check logs at: ${LOG_DIR}/experiment.log"
     exit 1
 fi
-

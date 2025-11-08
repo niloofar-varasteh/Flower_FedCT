@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Federated Averaging (FedAvg) Implementation
-Standard federated learning with model aggregation but NO pseudo-labeling.
+Federated Averaging (FedAvg) implementation.
+This matches FedCT parameters for fair comparison.
 """
 
 import argparse
@@ -12,11 +12,9 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 import torchvision
 import torchvision.transforms as T
+from torchvision import models as tvm
 
 
-# -----------------------
-# Utils
-# -----------------------
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -28,54 +26,80 @@ def device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def build_model(num_classes):
-    """Simple CNN for CIFAR10"""
-    return nn.Sequential(
-        nn.Conv2d(3, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
-        nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
-        nn.Flatten(),
-        nn.Linear(64 * 8 * 8, 256), nn.ReLU(),
-        nn.Linear(256, num_classes)
-    )
+def build_cnn_small(num_classes, in_ch=3):
+    """Simple CNN baseline."""
+    if in_ch == 3:
+        return nn.Sequential(
+            nn.Conv2d(3, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Flatten(),
+            nn.Linear(64 * 8 * 8, 256), nn.ReLU(),
+            nn.Linear(256, num_classes),
+        )
+    else:
+        return nn.Sequential(
+            nn.Conv2d(1, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Flatten(),
+            nn.Linear(64 * 7 * 7, 128), nn.ReLU(),
+            nn.Linear(128, num_classes),
+        )
 
 
-def build_model_gray(num_classes):
-    """Simple CNN for FashionMNIST (1 channel)"""
-    return nn.Sequential(
-        nn.Conv2d(1, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
-        nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
-        nn.Flatten(),
-        nn.Linear(64 * 7 * 7, 128), nn.ReLU(),
-        nn.Linear(128, num_classes)
-    )
+def _make_resnet_cifar(backbone: str, num_classes: int, in_ch: int):
+    """CIFAR-style ResNet."""
+    if backbone == "resnet18":
+        m = tvm.resnet18(weights=None)
+    elif backbone == "resnet34":
+        m = tvm.resnet34(weights=None)
+    else:
+        raise ValueError("Unsupported ResNet backbone")
+
+    # Replace first conv for CIFAR size and in_ch
+    m.conv1 = nn.Conv2d(in_ch, 64, kernel_size=3, stride=1, padding=1, bias=False)
+    m.maxpool = nn.Identity()
+    # Classifier
+    m.fc = nn.Linear(m.fc.in_features, num_classes)
+    return m
+
+
+def build_model(arch: str, num_classes: int, in_ch: int):
+    """Build model based on architecture name."""
+    arch = arch.lower()
+    if arch == "cnn_small":
+        return build_cnn_small(num_classes, in_ch)
+    elif arch in ("resnet18", "resnet34"):
+        return _make_resnet_cifar(arch, num_classes, in_ch)
+    else:
+        raise ValueError("Unknown --arch (use: resnet18, resnet34, cnn_small)")
 
 
 def get_datasets(name):
-    """Load dataset"""
+    """Load dataset with minimal transforms."""
     if name == "CIFAR10":
         tf = T.Compose([T.ToTensor()])
         train = torchvision.datasets.CIFAR10(root="./data", train=True, download=True, transform=tf)
         test = torchvision.datasets.CIFAR10(root="./data", train=False, download=True, transform=tf)
-        num_classes, channels = 10, 3
+        num_classes, in_ch = 10, 3
     elif name == "FashionMNIST":
         tf = T.Compose([T.ToTensor()])
         train = torchvision.datasets.FashionMNIST(root="./data", train=True, download=True, transform=tf)
         test = torchvision.datasets.FashionMNIST(root="./data", train=False, download=True, transform=tf)
-        num_classes, channels = 10, 1
+        num_classes, in_ch = 10, 1
     else:
         raise ValueError("Dataset must be CIFAR10 or FashionMNIST")
-    return train, test, num_classes, channels
+    return train, test, num_classes, in_ch
 
 
 def iid_partition(n_samples, num_clients):
-    """Split dataset indices uniformly among clients"""
+    """Partition dataset into IID splits."""
     idxs = np.random.permutation(n_samples)
     splits = np.array_split(idxs, num_clients)
     return [list(s) for s in splits]
 
 
 def evaluate(model, loader, device_):
-    """Evaluate model on test set"""
+    """Evaluate model on dataset."""
     model.eval()
     total, correct, loss_sum = 0, 0, 0.0
     criterion = nn.CrossEntropyLoss()
@@ -92,7 +116,7 @@ def evaluate(model, loader, device_):
 
 
 def train_one_epoch(model, loader, optimizer, device_):
-    """Train model for one epoch"""
+    """Train model for one epoch."""
     model.train()
     criterion = nn.CrossEntropyLoss()
     for x, y in loader:
@@ -104,7 +128,7 @@ def train_one_epoch(model, loader, optimizer, device_):
 
 
 def get_optimizer(name, params, lr):
-    """Get optimizer by name"""
+    """Get optimizer by name."""
     if name.lower() == "sgd":
         return torch.optim.SGD(params, lr=lr, momentum=0.9, weight_decay=5e-4)
     elif name.lower() == "adam":
@@ -114,54 +138,48 @@ def get_optimizer(name, params, lr):
 
 
 def get_state(model):
-    """Get model state dict"""
+    """Get model state dict."""
     return {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
 
 
 def set_state(model, state):
-    """Set model state dict"""
+    """Set model state dict."""
     model.load_state_dict(state, strict=True)
 
 
 def average_states(states):
-    """Average model weights (FedAvg aggregation)"""
+    """Average multiple state dicts (FedAvg)."""
     avg = {}
     for k in states[0].keys():
-        avg[k] = sum(s[k] for s in states) / len(states)
+        # Only average floating point tensors
+        if states[0][k].dtype in [torch.float32, torch.float64]:
+            avg[k] = torch.stack([s[k].float() for s in states]).mean(dim=0).type_as(states[0][k])
+        else:
+            # For non-float tensors, use the first one
+            avg[k] = states[0][k].clone()
     return avg
 
 
-# -----------------------
-# Main FedAvg
-# -----------------------
 def main():
     parser = argparse.ArgumentParser(description="Federated Averaging (FedAvg)")
-    parser.add_argument("--communication-rounds", type=int, default=15,
-                        help="Number of communication rounds")
-    parser.add_argument("--clients", type=int, default=5,
-                        help="Number of clients")
-    parser.add_argument("--local-rounds", type=int, default=3,
-                        help="Number of local epochs per communication round")
-    parser.add_argument("--dataset", type=str, default="CIFAR10",
-                        choices=["CIFAR10", "FashionMNIST"],
-                        help="Dataset to use")
-    parser.add_argument("--optimizer", type=str, default="Adam",
-                        choices=["SGD", "Adam"],
-                        help="Optimizer to use")
-    parser.add_argument("--lr", type=float, default=0.001,
-                        help="Learning rate")
-    parser.add_argument("--batch-size", type=int, default=64,
-                        help="Batch size for training")
-
-    # Unused arguments for compatibility with FedCT scripts
-    parser.add_argument("--unlabeled", type=int, default=100)
-    parser.add_argument("--private-batch-size", type=int, default=64)
-    parser.add_argument("--public-batch-size", type=int, default=32)
+    parser.add_argument("--communication-rounds", type=int, default=15, help="Aggregation rounds")
+    parser.add_argument("--clients", type=int, default=5, help="Number of clients")
+    parser.add_argument("--local-rounds", type=int, default=3, help="Local epochs per aggregation")
+    parser.add_argument("--dataset", type=str, default="CIFAR10", choices=["CIFAR10", "FashionMNIST"])
+    parser.add_argument("--optimizer", type=str, default="Adam", choices=["SGD", "Adam"])
+    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--arch", type=str, default="resnet18",
+                        choices=["resnet18", "resnet34", "cnn_small"],
+                        help="Backbone architecture")
+    parser.add_argument("--log-per-local", type=int, default=1,
+                        help="If 1, log avg client accuracy after each local epoch")
 
     args = parser.parse_args()
 
-    # Set random seed for reproducibility
-    set_seed(42)
+    # Reproducibility
+    set_seed(args.seed)
     dev = device()
 
     print("=" * 80)
@@ -169,74 +187,74 @@ def main():
     print("=" * 80)
     print(f"Dataset:              {args.dataset}")
     print(f"Clients:              {args.clients}")
-    print(f"Communication rounds: {args.communication_rounds}")
+    print(f"Aggregation rounds:   {args.communication_rounds}")
     print(f"Local epochs/round:   {args.local_rounds}")
     print(f"Batch size:           {args.batch_size}")
     print(f"Optimizer:            {args.optimizer}")
     print(f"Learning rate:        {args.lr}")
+    print(f"Architecture:         {args.arch}")
+    print(f"Seed:                 {args.seed}")
+    print(f"Log per local round:  {args.log_per_local}")
     print("=" * 80)
     print()
 
-    # Load data
-    train_ds, test_ds, num_classes, channels = get_datasets(args.dataset)
+    # Data
+    train_ds, test_ds, num_classes, in_ch = get_datasets(args.dataset)
     test_loader = DataLoader(test_ds, batch_size=256, shuffle=False, num_workers=0)
 
-    # Partition training data IID among clients
+    # IID split
     parts = iid_partition(len(train_ds), args.clients)
+    client_loaders = [
+        DataLoader(Subset(train_ds, part), batch_size=args.batch_size, shuffle=True, num_workers=0)
+        for part in parts
+    ]
+    print(f"Data partitioned: {args.clients} clients, ~{len(parts[0])} samples each\n")
 
-    # Create client data loaders
-    client_loaders = []
-    for i in range(args.clients):
-        subset = Subset(train_ds, parts[i])
-        loader = DataLoader(subset, batch_size=args.batch_size, shuffle=True, num_workers=0)
-        client_loaders.append(loader)
+    # Init global model
+    global_model = build_model(args.arch, num_classes, in_ch).to(dev)
 
-    print(f"Data partitioned: {args.clients} clients, ~{len(parts[0])} samples each")
-    print()
-
-    # Initialize global model
-    if channels == 3:
-        global_model = build_model(num_classes).to(dev)
-    else:
-        global_model = build_model_gray(num_classes).to(dev)
-
-    # Evaluate initial model
+    # Round 1 eval
     init_loss, init_acc = evaluate(global_model, test_loader, dev)
-    print(f"Round 0 - Loss: {init_loss:.4f} - Accuracy: {init_acc:.4f}")
+    print(f"Round 1 - Loss: {init_loss:.4f} - Accuracy: {init_acc:.4f}")
 
-    # FedAvg training loop
+    # FedAvg training
     for rnd in range(1, args.communication_rounds + 1):
         print(f"\n{'=' * 80}")
-        print(f"Communication Round {rnd}/{args.communication_rounds}")
+        print(f"Aggregation Round {rnd}/{args.communication_rounds}")
         print(f"{'=' * 80}")
 
-        client_states = []
+        # Create per-client models cloned from global (once per round)
+        local_models = [build_model(args.arch, num_classes, in_ch).to(dev) for _ in range(args.clients)]
+        for m in local_models:
+            set_state(m, get_state(global_model))
+        opts = [get_optimizer(args.optimizer, m.parameters(), args.lr) for m in local_models]
 
-        # Train each client
-        for cid in range(args.clients):
-            # Create local model as copy of global
-            if channels == 3:
-                local_model = build_model(num_classes).to(dev)
-            else:
-                local_model = build_model_gray(num_classes).to(dev)
+        # Train for local epochs, and (optionally) log after EACH local epoch
+        for e in range(1, args.local_rounds + 1):
+            # 1) One local epoch on each client
+            for cid, (m, opt, loader) in enumerate(zip(local_models, opts, client_loaders)):
+                train_one_epoch(m, loader, opt, dev)
 
-            set_state(local_model, get_state(global_model))
+            if args.log_per_local:
+                # 2) After finishing this local epoch on ALL clients,
+                #    evaluate each client's model on the common test set
+                accs, losses = [], []
+                for m in local_models:
+                    l, a = evaluate(m, test_loader, dev)
+                    losses.append(l)
+                    accs.append(a)
 
-            # Create optimizer for local training
-            optimizer = get_optimizer(args.optimizer, local_model.parameters(), args.lr)
+                # 3) Average across clients -> a single point per LOCAL epoch
+                avg_acc = float(np.mean(accs))
+                avg_loss = float(np.mean(losses))
 
-            # Local training: multiple epochs on client's data
-            for epoch in range(args.local_rounds):
-                train_one_epoch(local_model, client_loaders[cid], optimizer, dev)
+                # 4) IMPORTANT: Keep this exact format so compare_fedct_fedavg.py (--mode local) can parse it
+                #    Regex expects: r"\[LOCAL\].*acc=([0-9.]+).*loss=([0-9.]+)"
+                print(f"[LOCAL] epoch={e}/{args.local_rounds} acc={avg_acc:.4f} loss={avg_loss:.4f}")
 
-            # Collect local model weights
-            client_states.append(get_state(local_model))
-
-            print(f"  Client {cid + 1}/{args.clients} completed local training")
-
-        # Aggregate models (FedAvg)
+        # Aggregate client models
         print("\n  Aggregating client models...")
-        new_global = average_states(client_states)
+        new_global = average_states([get_state(m) for m in local_models])
         set_state(global_model, new_global)
         print("  ✓ Global model updated")
 
@@ -255,3 +273,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
