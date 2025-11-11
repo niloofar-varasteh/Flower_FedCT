@@ -8,9 +8,9 @@ export PYTHONIOENCODING=utf-8
 export PYTHONUNBUFFERED=1
 
 # Default parameters (same for both experiments)
-COMM_ROUNDS=15
+COMM_ROUNDS=20
 CLIENTS=5
-LOCAL_ROUNDS=3
+LOCAL_ROUNDS=10
 DATASET="CIFAR10"
 OPTIMIZER="Adam"
 LR=0.001
@@ -109,4 +109,3 @@ echo -e "${GREEN}===============================================================
 echo -e "Results saved to: ${GREEN}fedct_vs_fedavg_local.png${NC}"
 echo -e "Mode: ${GREEN}local rounds${NC} (showing all local training steps)"
 echo ""
-

@@ -35,10 +35,10 @@ serverapp = "fedcot.server_app:app"
 clientapp = "fedcot.client_app:app"
 
 [tool.flwr.app.config]
-num-communication-rounds = 5    # Number of communication rounds (optimized default)
+num-communication-rounds = 5    # Number of communication rounds (MATCH FedAvg)
 num-clients = 5                   # Number of clients participating
-num-local-rounds = 4              # Number of local rounds (passes through dataset) before communication
-unlabeled-size = 100              # Size of public unlabeled dataset (shared across all clients)
+num-local-rounds = 3              # Number of local rounds (MATCH FedAvg: 20×3=60 total epochs)
+unlabeled-size = 1000             # Size of public unlabeled dataset (shared across all clients)
 dataset = "CIFAR10"               # Dataset: CIFAR10 or FashionMNIST
 optimizer = "Adam"                # Optimizer: SGD or Adam (Adam default for better performance)
 learning-rate = 0.001             # Learning rate (optimized for Adam)
@@ -52,3 +52,5 @@ default = "local-simulation"
 options.num-supernodes = 5  # Should match num-clients in run-config (modify if using more clients)
 options.backend.init_args.logging_level = 40  # Suppress Ray actor messages (ERROR=40, WARNING=30, INFO=20)
 options.backend.init_args.log_to_driver = false  # Don't duplicate logs to driver
+options.backend.client_resources.num_cpus = 2  # CPUs per client
+options.backend.client_resources.num_gpus = 0.2  # GPU share per client (5 clients × 0.2 = 1.0 total GPU)

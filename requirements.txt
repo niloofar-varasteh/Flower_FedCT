@@ -1,4 +1,17 @@
-flwr[simulation]>=1.8.0
-torch>=2.0.0
-torchvision>=0.15.0
-numpy>=1.24.0
+# Flower with simulation support (Ray backend)
+flwr[simulation]>=1.23.0
+
+# PyTorch (stable version for Windows + Ray compatibility)
+torch==2.1.0+cu118
+torchvision==0.16.0+cu118
+torchaudio==2.1.0+cu118
+
+# NumPy - MUST be 1.x for PyTorch 2.1.0 compatibility
+numpy>=1.24.0,<2.0
+
+# Visualization
+matplotlib>=3.8.0
+
+# Installation instructions for PyTorch:
+# pip install torch==2.1.0+cu118 torchvision==0.16.0+cu118 torchaudio==2.1.0+cu118 --index-url https://download.pytorch.org/whl/cu118
+# Then: pip install -r requirements.txt
