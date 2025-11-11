@@ -13,9 +13,9 @@ export PYTHONUNBUFFERED=1
 # -----------------------------
 # Defaults (align with FedCT)
 # -----------------------------
-NUM_COMMUNICATION_ROUNDS=5  # FedAvg aggregation rounds
+NUM_COMMUNICATION_ROUNDS=20  # FedAvg aggregation rounds
 NUM_CLIENTS=5
-NUM_LOCAL_ROUNDS=3           # local epochs per aggregation round
+NUM_LOCAL_ROUNDS=10          # local epochs per aggregation round
 DATASET="CIFAR10"
 OPTIMIZER="Adam"
 LEARNING_RATE=0.001

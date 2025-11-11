@@ -27,10 +27,10 @@ export PYTHONIOENCODING=utf-8
 ################################################################################
 
 # Default parameters (optimized for better performance)
-NUM_COMMUNICATION_ROUNDS=5
+NUM_COMMUNICATION_ROUNDS=20
 NUM_CLIENTS=5
-NUM_LOCAL_ROUNDS=3
-UNLABELED_SIZE=1000
+NUM_LOCAL_ROUNDS=10
+UNLABELED_SIZE=100
 DATASET="CIFAR10"
 OPTIMIZER="Adam"
 LEARNING_RATE=0.001

@@ -35,10 +35,10 @@ serverapp = "fedcot.server_app:app"
 clientapp = "fedcot.client_app:app"
 
 [tool.flwr.app.config]
-num-communication-rounds = 5    # Number of communication rounds (MATCH FedAvg)
+num-communication-rounds = 20    # Number of communication rounds (MATCH FedAvg)
 num-clients = 5                   # Number of clients participating
-num-local-rounds = 3              # Number of local rounds (MATCH FedAvg: 20×3=60 total epochs)
-unlabeled-size = 1000             # Size of public unlabeled dataset (shared across all clients)
+num-local-rounds = 10              # Number of local rounds (MATCH FedAvg: 20×3=60 total epochs)
+unlabeled-size = 100             # Size of public unlabeled dataset (shared across all clients)
 dataset = "CIFAR10"               # Dataset: CIFAR10 or FashionMNIST
 optimizer = "Adam"                # Optimizer: SGD or Adam (Adam default for better performance)
 learning-rate = 0.001             # Learning rate (optimized for Adam)
