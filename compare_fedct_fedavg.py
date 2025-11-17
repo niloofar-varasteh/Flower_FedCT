@@ -199,21 +199,18 @@ def main():
         x_label = "Local Training Step"
         metric_label = "Train" if args.metric_type == "train" else "Test"
     
+    if not fav_x:
+        raise SystemExit("No FedAvg points parsed. Check log format (are [LOCAL] lines enabled?).")
     if not fct_x:
         raise SystemExit("No FedCT points parsed. Check FedCT log format.")
     
-    # Only require FedAvg if we're not in train mode with missing train metrics
-    if not fav_x and not (args.metric_type == "train" and not fav_l):
-        raise SystemExit("No FedAvg points parsed. Check log format (are [LOCAL] lines enabled?).")
-    
     # Warn if train metrics requested but not available
     if args.metric_type == "train" and not fav_l:
-        print("WARNING: Train metrics not found in FedAvg log. This may be an old log format.")
-        print("   FedAvg train metrics will not be shown in the plot.")
-        print("   Only FedCT train metrics will be plotted.")
-        print("   To get FedAvg train metrics, re-run FedAvg with the updated code.")
-        # Keep empty lists for FedAvg - we'll only plot FedCT
-        fav_x, fav_l, fav_a = [], [], []
+        print("⚠ WARNING: Train metrics not found in FedAvg log. This may be an old log format.")
+        print("   Re-run FedAvg with the updated code to get train metrics.")
+        print("   Falling back to test metrics...")
+        fav_x, fav_l, fav_a = parse_fedavg_local(fav_path, metric_type="test")
+        metric_label = "Test"
     
     # Create comparison plot
     plt.figure(figsize=(12, 5))
@@ -221,8 +218,7 @@ def main():
     # Loss plot
     ax1 = plt.subplot(1, 2, 1)
     ax1.plot(fct_x, fct_l, "o-", label="FedCT", linewidth=2, markersize=4)
-    if fav_x and fav_l:
-        ax1.plot(fav_x, fav_l, "s-", label="FedAvg", linewidth=2, markersize=4)
+    ax1.plot(fav_x, fav_l, "s-", label="FedAvg", linewidth=2, markersize=4)
     ax1.set_xlabel(x_label, fontsize=11)
     ax1.set_ylabel(f"{metric_label} Loss", fontsize=11)
     ax1.set_title(f"{metric_label} Loss Comparison", fontsize=12, fontweight='bold')
@@ -232,8 +228,7 @@ def main():
     # Accuracy plot
     ax2 = plt.subplot(1, 2, 2)
     ax2.plot(fct_x, fct_a, "o-", label="FedCT", linewidth=2, markersize=4, color='#2ecc71')
-    if fav_x and fav_a:
-        ax2.plot(fav_x, fav_a, "s-", label="FedAvg", linewidth=2, markersize=4, color='#e74c3c')
+    ax2.plot(fav_x, fav_a, "s-", label="FedAvg", linewidth=2, markersize=4, color='#e74c3c')
     ax2.set_xlabel(x_label, fontsize=11)
     ax2.set_ylabel(f"{metric_label} Accuracy", fontsize=11)
     ax2.set_title(f"{metric_label} Accuracy Comparison", fontsize=12, fontweight='bold')
@@ -241,39 +236,30 @@ def main():
     ax2.legend(fontsize=10)
     
     # Add final accuracy values as text
-    if fct_a:
+    if fct_a and fav_a:
         final_fedct = fct_a[-1]
-        text_str = f"Final:\nFedCT: {final_fedct:.3f}"
-        if fav_a:
-            final_fedavg = fav_a[-1]
-            improvement = ((final_fedct - final_fedavg) / final_fedavg) * 100
-            text_str += f"\nFedAvg: {final_fedavg:.3f}\nImprovement: {improvement:+.1f}%"
-        else:
-            text_str += "\n(FedAvg train metrics\nnot available)"
-        ax2.text(0.02, 0.98, text_str,
+        final_fedavg = fav_a[-1]
+        improvement = ((final_fedct - final_fedavg) / final_fedavg) * 100
+        ax2.text(0.02, 0.98, f"Final:\nFedCT: {final_fedct:.3f}\nFedAvg: {final_fedavg:.3f}\nImprovement: {improvement:+.1f}%",
                 transform=ax2.transAxes, fontsize=9, verticalalignment='top',
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     plt.suptitle(f"{args.title} — Mode: {args.mode}, Metric: {metric_label.lower()}", y=1.02, fontsize=13, fontweight='bold')
     plt.tight_layout()
     plt.savefig(args.out, dpi=220, bbox_inches='tight')
-    print(f"[OK] Saved plot -> {args.out}")
+    print(f"✓ Saved plot -> {args.out}")
     
     # Print summary statistics
     print("\n" + "=" * 80)
     print(f"Comparison Summary ({metric_label} Metrics)")
     print("=" * 80)
-    if fct_a:
+    if fct_a and fav_a:
         print(f"FedCT Final {metric_label} Accuracy:  {fct_a[-1]:.4f}")
-        print(f"FedCT Max {metric_label} Accuracy:    {max(fct_a):.4f}")
-    if fav_a:
         print(f"FedAvg Final {metric_label} Accuracy: {fav_a[-1]:.4f}")
+        improvement = ((fct_a[-1] - fav_a[-1]) / fav_a[-1]) * 100
+        print(f"Improvement:           {improvement:+.2f}%")
+        print(f"FedCT Max {metric_label} Accuracy:    {max(fct_a):.4f}")
         print(f"FedAvg Max {metric_label} Accuracy:   {max(fav_a):.4f}")
-        if fct_a:
-            improvement = ((fct_a[-1] - fav_a[-1]) / fav_a[-1]) * 100
-            print(f"Improvement:           {improvement:+.2f}%")
-    else:
-        print("FedAvg train metrics not available in log file.")
     print("=" * 80)
 
 

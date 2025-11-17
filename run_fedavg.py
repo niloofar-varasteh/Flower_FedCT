@@ -371,7 +371,7 @@ def main():
         print("\n  Aggregating client models...")
         new_global = average_states([get_state(m) for m in local_models])
         set_state(global_model, new_global)
-        print("  [OK] Global model updated")
+        print("  ✓ Global model updated")
 
         # Evaluate global model
         loss, acc = evaluate(global_model, test_loader, dev)
