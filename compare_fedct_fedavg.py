@@ -21,16 +21,23 @@ def latest_log(root: str):
     return cands[0] if cands else None
 
 
-def parse_fedavg_local(path: Path):
+def parse_fedavg_local(path: Path, metric_type="test"):
     """
     Parse per-local-epoch metrics from FedAvg logs.
     
     Supports:
-    [LOCAL] epoch=E/T acc=0.1234 loss=0.5678   ← format from run_fedavg.py
+    [LOCAL] epoch=E/T acc=0.1234 loss=0.5678   ← old format (test metrics)
+    [LOCAL] epoch=E/T train_acc=... train_loss=... test_acc=... test_loss=...  ← new format (both train and test)
+    
+    Args:
+        metric_type: "train" or "test" to select which metrics to return
     """
     r_local, accs, losses = [], [], []
     
-    pat = re.compile(r"\[LOCAL\]\s*epoch=(\d+)/(\d+)\s+acc=([0-9.]+)\s+loss=([0-9.]+)")
+    # Try new format first (with train/test distinction)
+    pat_new = re.compile(r"\[LOCAL\]\s*epoch=(\d+)/(\d+)\s+train_acc=([0-9.]+)\s+train_loss=([0-9.]+)\s+test_acc=([0-9.]+)\s+test_loss=([0-9.]+)")
+    # Fallback to old format (test metrics only)
+    pat_old = re.compile(r"\[LOCAL\]\s*epoch=(\d+)/(\d+)\s+acc=([0-9.]+)\s+loss=([0-9.]+)")
     
     # Also try to extract communication round info from context
     comm_round = 0
@@ -45,43 +52,87 @@ def parse_fedavg_local(path: Path):
             comm_round = int(comm_match.group(1))
             continue
         
-        m = pat.search(s)
-        if m:
-            e, T = int(m.group(1)), int(m.group(2))
-            acc = float(m.group(3))
-            los = float(m.group(4))
+        # Try new format first
+        m_new = pat_new.search(s)
+        if m_new:
+            e, T = int(m_new.group(1)), int(m_new.group(2))
+            train_acc = float(m_new.group(3))
+            train_loss = float(m_new.group(4))
+            test_acc = float(m_new.group(5))
+            test_loss = float(m_new.group(6))
             
             if local_rounds_per_comm is None:
                 local_rounds_per_comm = T
             
-            # Global local round index: (communication_round - 1) * local_rounds_per_round + (local_round - 1)
-            # comm_round starts from 1, local_round (e) starts from 1
             step = (comm_round - 1) * local_rounds_per_comm + (e - 1)
             r_local.append(step)
-            accs.append(acc)
-            losses.append(los)
+            
+            if metric_type == "train":
+                accs.append(train_acc)
+                losses.append(train_loss)
+            else:  # test
+                accs.append(test_acc)
+                losses.append(test_loss)
+            continue
+        
+        # Try old format (backward compatibility)
+        m_old = pat_old.search(s)
+        if m_old:
+            e, T = int(m_old.group(1)), int(m_old.group(2))
+            acc = float(m_old.group(3))
+            los = float(m_old.group(4))
+            
+            if local_rounds_per_comm is None:
+                local_rounds_per_comm = T
+            
+            step = (comm_round - 1) * local_rounds_per_comm + (e - 1)
+            r_local.append(step)
+            # Old format only has test metrics
+            if metric_type == "test":
+                accs.append(acc)
+                losses.append(los)
+            # If train requested but only test available, skip or use test (user will see warning)
+            elif metric_type == "train":
+                # Skip this point - train metrics not available in old format
+                continue
     
     return r_local, losses, accs
 
 
-def parse_fedct_local(path: Path):
-    """Parse every local step for FedCT (handles both direct and Flower logs)."""
-    # Pattern handles both formats:
-    # Local Round 1/3 [Flower Round 1]: Test Loss: X, Test Acc: Y
+def parse_fedct_local(path: Path, metric_type="test"):
+    """
+    Parse every local step for FedCT (handles both direct and Flower logs).
+    
+    Pattern handles:
+    Local Round 1/3 [Flower Round 1]: Train Loss: X, Train Acc: Y, Test Loss: X, Test Acc: Y
+    
+    Args:
+        metric_type: "train" or "test" to select which metrics to return
+    """
+    # Pattern matches: Train Loss: X, Train Acc: Y, Test Loss: X, Test Acc: Y
     pat = re.compile(
-        r"Local Round\s+(\d+)/(\d+)\s+\[Flower Round\s+(\d+)\]:.*?Test Loss:\s+([0-9.]+),\s+Test Acc:\s+([0-9.]+)"
+        r"Local Round\s+(\d+)/(\d+)\s+\[Flower Round\s+(\d+)\]:.*?Train Loss:\s+([0-9.]+),\s+Train Acc:\s+([0-9.]+),\s+Test Loss:\s+([0-9.]+),\s+Test Acc:\s+([0-9.]+)"
     )
     xs, losses, accs = [], [], []
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         m = pat.search(line)
         if m:
             local_round, total_local, comm_round = int(m.group(1)), int(m.group(2)), int(m.group(3))
-            tl, ta = float(m.group(4)), float(m.group(5))
+            train_loss = float(m.group(4))
+            train_acc = float(m.group(5))
+            test_loss = float(m.group(6))
+            test_acc = float(m.group(7))
+            
             # Global step: (comm_round - 1) * total_local + local_round - 1
             step = (comm_round - 1) * total_local + (local_round - 1)
             xs.append(step)
-            losses.append(tl)
-            accs.append(ta)
+            
+            if metric_type == "train":
+                losses.append(train_loss)
+                accs.append(train_acc)
+            else:  # test
+                losses.append(test_loss)
+                accs.append(test_acc)
     return xs, losses, accs
 
 
@@ -115,38 +166,54 @@ def parse_fedct_comm(path: Path):
 def main():
     ap = argparse.ArgumentParser(description="Compare FedCT vs FedAvg results")
     ap.add_argument("--fedavg-log", type=str, help="Path to FedAvg experiment.log (optional)")
-    ap.add_argument("--fedct-log", type=str, help="Path to FedCT experiment.log (optional)")
+    ap.add_argument("--fedcot-log", type=str, help="Path to FedCT experiment.log (optional)")
     ap.add_argument("--out", type=str, default="fedct_vs_fedavg.png")
     ap.add_argument("--title", type=str, default="FedCT vs FedAvg")
     ap.add_argument("--mode", choices=["comm", "local"], default="local",
                     help="comm = per communication round, local = per local epoch/step")
+    ap.add_argument("--metric-type", choices=["train", "test"], default="test",
+                    help="train = plot train metrics, test = plot test metrics (default: test)")
     args = ap.parse_args()
     
     fav_path = Path(args.fedavg_log) if args.fedavg_log else latest_log("logs_fedavg")
-    fct_path = Path(args.fedct_log) if args.fedct_log else latest_log("logs")
+    fct_path = Path(args.fedcot_log) if args.fedcot_log else latest_log("logs")
     
     if not fav_path or not fav_path.exists():
         raise SystemExit("FedAvg log not found. Pass --fedavg-log or put logs under logs_fedavg/**/experiment.log")
     if not fct_path or not fct_path.exists():
-        raise SystemExit("FedCT log not found. Pass --fedct-log or put logs under logs/**/experiment.log")
+        raise SystemExit("FedCT log not found. Pass --fedcot-log or put logs under logs/**/experiment.log")
     
     print(f"\nUsing FedAvg log: {fav_path}")
     print(f"Using FedCT  log: {fct_path}\n")
     
     if args.mode == "comm":
         # For communication rounds, we need to extract only the last local round of each comm round
-        fav_x, fav_l, fav_a = parse_fedavg_local(fav_path)
+        # Note: comm mode currently only supports test metrics
+        fav_x, fav_l, fav_a = parse_fedavg_local(fav_path, metric_type="test")
         fct_x, fct_l, fct_a = parse_fedct_comm(fct_path)
         x_label = "Communication Round"
+        metric_label = "Test"
     else:  # local
-        fav_x, fav_l, fav_a = parse_fedavg_local(fav_path)
-        fct_x, fct_l, fct_a = parse_fedct_local(fct_path)
+        fav_x, fav_l, fav_a = parse_fedavg_local(fav_path, metric_type=args.metric_type)
+        fct_x, fct_l, fct_a = parse_fedct_local(fct_path, metric_type=args.metric_type)
         x_label = "Local Training Step"
+        metric_label = "Train" if args.metric_type == "train" else "Test"
     
-    if not fav_x:
-        raise SystemExit("No FedAvg points parsed. Check log format (are [LOCAL] lines enabled?).")
     if not fct_x:
         raise SystemExit("No FedCT points parsed. Check FedCT log format.")
+    
+    # Only require FedAvg if we're not in train mode with missing train metrics
+    if not fav_x and not (args.metric_type == "train" and not fav_l):
+        raise SystemExit("No FedAvg points parsed. Check log format (are [LOCAL] lines enabled?).")
+    
+    # Warn if train metrics requested but not available
+    if args.metric_type == "train" and not fav_l:
+        print("WARNING: Train metrics not found in FedAvg log. This may be an old log format.")
+        print("   FedAvg train metrics will not be shown in the plot.")
+        print("   Only FedCT train metrics will be plotted.")
+        print("   To get FedAvg train metrics, re-run FedAvg with the updated code.")
+        # Keep empty lists for FedAvg - we'll only plot FedCT
+        fav_x, fav_l, fav_a = [], [], []
     
     # Create comparison plot
     plt.figure(figsize=(12, 5))
@@ -154,48 +221,59 @@ def main():
     # Loss plot
     ax1 = plt.subplot(1, 2, 1)
     ax1.plot(fct_x, fct_l, "o-", label="FedCT", linewidth=2, markersize=4)
-    ax1.plot(fav_x, fav_l, "s-", label="FedAvg", linewidth=2, markersize=4)
+    if fav_x and fav_l:
+        ax1.plot(fav_x, fav_l, "s-", label="FedAvg", linewidth=2, markersize=4)
     ax1.set_xlabel(x_label, fontsize=11)
-    ax1.set_ylabel("Test Loss", fontsize=11)
-    ax1.set_title("Test Loss Comparison", fontsize=12, fontweight='bold')
+    ax1.set_ylabel(f"{metric_label} Loss", fontsize=11)
+    ax1.set_title(f"{metric_label} Loss Comparison", fontsize=12, fontweight='bold')
     ax1.grid(True, alpha=0.3)
     ax1.legend(fontsize=10)
     
     # Accuracy plot
     ax2 = plt.subplot(1, 2, 2)
     ax2.plot(fct_x, fct_a, "o-", label="FedCT", linewidth=2, markersize=4, color='#2ecc71')
-    ax2.plot(fav_x, fav_a, "s-", label="FedAvg", linewidth=2, markersize=4, color='#e74c3c')
+    if fav_x and fav_a:
+        ax2.plot(fav_x, fav_a, "s-", label="FedAvg", linewidth=2, markersize=4, color='#e74c3c')
     ax2.set_xlabel(x_label, fontsize=11)
-    ax2.set_ylabel("Test Accuracy", fontsize=11)
-    ax2.set_title("Test Accuracy Comparison", fontsize=12, fontweight='bold')
+    ax2.set_ylabel(f"{metric_label} Accuracy", fontsize=11)
+    ax2.set_title(f"{metric_label} Accuracy Comparison", fontsize=12, fontweight='bold')
     ax2.grid(True, alpha=0.3)
     ax2.legend(fontsize=10)
     
     # Add final accuracy values as text
-    if fct_a and fav_a:
+    if fct_a:
         final_fedct = fct_a[-1]
-        final_fedavg = fav_a[-1]
-        improvement = ((final_fedct - final_fedavg) / final_fedavg) * 100
-        ax2.text(0.02, 0.98, f"Final:\nFedCT: {final_fedct:.3f}\nFedAvg: {final_fedavg:.3f}\nImprovement: {improvement:+.1f}%",
+        text_str = f"Final:\nFedCT: {final_fedct:.3f}"
+        if fav_a:
+            final_fedavg = fav_a[-1]
+            improvement = ((final_fedct - final_fedavg) / final_fedavg) * 100
+            text_str += f"\nFedAvg: {final_fedavg:.3f}\nImprovement: {improvement:+.1f}%"
+        else:
+            text_str += "\n(FedAvg train metrics\nnot available)"
+        ax2.text(0.02, 0.98, text_str,
                 transform=ax2.transAxes, fontsize=9, verticalalignment='top',
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
-    plt.suptitle(f"{args.title} — Mode: {args.mode}", y=1.02, fontsize=13, fontweight='bold')
+    plt.suptitle(f"{args.title} — Mode: {args.mode}, Metric: {metric_label.lower()}", y=1.02, fontsize=13, fontweight='bold')
     plt.tight_layout()
     plt.savefig(args.out, dpi=220, bbox_inches='tight')
-    print(f"✓ Saved plot -> {args.out}")
+    print(f"[OK] Saved plot -> {args.out}")
     
     # Print summary statistics
     print("\n" + "=" * 80)
-    print("Comparison Summary")
+    print(f"Comparison Summary ({metric_label} Metrics)")
     print("=" * 80)
-    if fct_a and fav_a:
-        print(f"FedCT Final Accuracy:  {fct_a[-1]:.4f}")
-        print(f"FedAvg Final Accuracy: {fav_a[-1]:.4f}")
-        improvement = ((fct_a[-1] - fav_a[-1]) / fav_a[-1]) * 100
-        print(f"Improvement:           {improvement:+.2f}%")
-        print(f"FedCT Max Accuracy:    {max(fct_a):.4f}")
-        print(f"FedAvg Max Accuracy:   {max(fav_a):.4f}")
+    if fct_a:
+        print(f"FedCT Final {metric_label} Accuracy:  {fct_a[-1]:.4f}")
+        print(f"FedCT Max {metric_label} Accuracy:    {max(fct_a):.4f}")
+    if fav_a:
+        print(f"FedAvg Final {metric_label} Accuracy: {fav_a[-1]:.4f}")
+        print(f"FedAvg Max {metric_label} Accuracy:   {max(fav_a):.4f}")
+        if fct_a:
+            improvement = ((fct_a[-1] - fav_a[-1]) / fav_a[-1]) * 100
+            print(f"Improvement:           {improvement:+.2f}%")
+    else:
+        print("FedAvg train metrics not available in log file.")
     print("=" * 80)
 
 

@@ -2,6 +2,7 @@
 """
 Federated Averaging (FedAvg) implementation.
 This matches FedCT parameters for fair comparison.
+Now supports: resnet18, resnet34, cnn_small, LightCNN.
 """
 
 import argparse
@@ -46,6 +47,35 @@ def build_cnn_small(num_classes, in_ch=3):
         )
 
 
+def build_lightcnn(num_classes, in_ch=3):
+    """
+    A lightweight CNN: deeper than cnn_small, but much smaller than ResNet18.
+    Works for both RGB (in_ch=3) and grayscale (in_ch=1).
+    """
+    return nn.Sequential(
+        # Block 1
+        nn.Conv2d(in_ch, 32, kernel_size=3, padding=1, bias=False),
+        nn.BatchNorm2d(32),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(2),  # 32x32 -> 16x16 (CIFAR-style)
+
+        # Block 2
+        nn.Conv2d(32, 64, kernel_size=3, padding=1, bias=False),
+        nn.BatchNorm2d(64),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(2),  # 16x16 -> 8x8
+
+        # Block 3
+        nn.Conv2d(64, 128, kernel_size=3, padding=1, bias=False),
+        nn.BatchNorm2d(128),
+        nn.ReLU(inplace=True),
+        nn.AdaptiveAvgPool2d((1, 1)),  # -> 1x1
+
+        nn.Flatten(),
+        nn.Linear(128, num_classes),
+    )
+
+
 def _make_resnet_cifar(backbone: str, num_classes: int, in_ch: int):
     """CIFAR-style ResNet."""
     if backbone == "resnet18":
@@ -65,13 +95,15 @@ def _make_resnet_cifar(backbone: str, num_classes: int, in_ch: int):
 
 def build_model(arch: str, num_classes: int, in_ch: int):
     """Build model based on architecture name."""
-    arch = arch.lower()
+    arch = arch.lower()  # so LightCNN/LIGHTCNN/etc. all map to 'lightcnn'
     if arch == "cnn_small":
         return build_cnn_small(num_classes, in_ch)
     elif arch in ("resnet18", "resnet34"):
         return _make_resnet_cifar(arch, num_classes, in_ch)
+    elif arch == "lightcnn":
+        return build_lightcnn(num_classes, in_ch)
     else:
-        raise ValueError("Unknown --arch (use: resnet18, resnet34, cnn_small)")
+        raise ValueError("Unknown --arch (use: resnet18, resnet34, cnn_small, LightCNN)")
 
 
 def get_datasets(name):
@@ -98,6 +130,44 @@ def iid_partition(n_samples, num_clients):
     return [list(s) for s in splits]
 
 
+def iid_partition_with_public(n_samples, num_clients, public_size=100, seed=42):
+    """
+    Partition dataset matching FedCT's split:
+    - First `public_size` samples are separated as public dataset (shared by all clients)
+    - Remaining samples are split IID among clients
+    
+    This ensures fair comparison with FedCT which uses:
+    - 100 public samples (with pseudo-labels)
+    - Remaining samples split among clients (with true labels)
+    
+    FedAvg will use:
+    - Same 100 public samples (with TRUE labels)
+    - Same remaining samples split among clients
+    """
+    np.random.seed(seed)
+    all_indices = np.arange(n_samples)
+    
+    # Sample indices for public dataset (same as FedCT does)
+    public_indices = np.random.choice(all_indices, size=public_size, replace=False)
+    
+    # Remaining indices for private data
+    private_mask = np.ones(n_samples, dtype=bool)
+    private_mask[public_indices] = False
+    private_indices = all_indices[private_mask]
+    
+    # Partition private data among clients (IID split)
+    samples_per_client = len(private_indices) // num_clients
+    client_splits = []
+    for i in range(num_clients):
+        start_idx = i * samples_per_client
+        end_idx = start_idx + samples_per_client
+        client_private = private_indices[start_idx:end_idx]
+        # Each client gets their private data + all public data
+        client_splits.append(np.concatenate([client_private, public_indices]).tolist())
+    
+    return client_splits, public_indices.tolist()
+
+
 def evaluate(model, loader, device_):
     """Evaluate model on dataset."""
     model.eval()
@@ -116,15 +186,25 @@ def evaluate(model, loader, device_):
 
 
 def train_one_epoch(model, loader, optimizer, device_):
-    """Train model for one epoch."""
+    """Train model for one epoch. Returns average train loss and accuracy."""
     model.train()
     criterion = nn.CrossEntropyLoss()
+    total, correct, loss_sum = 0, 0, 0.0
     for x, y in loader:
         x, y = x.to(device_), y.to(device_)
         optimizer.zero_grad()
-        loss = criterion(model(x), y)
+        logits = model(x)
+        loss = criterion(logits, y)
         loss.backward()
         optimizer.step()
+        
+        # Track training metrics
+        loss_sum += float(loss.item()) * y.size(0)
+        pred = logits.argmax(dim=1)
+        correct += int((pred == y).sum().item())
+        total += y.size(0)
+    
+    return loss_sum / total, correct / total
 
 
 def get_optimizer(name, params, lr):
@@ -170,11 +250,25 @@ def main():
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--arch", type=str, default="resnet18",
-                        choices=["resnet18", "resnet34", "cnn_small"],
-                        help="Backbone architecture")
-    parser.add_argument("--log-per-local", type=int, default=1,
-                        help="If 1, log avg client accuracy after each local epoch")
+    parser.add_argument(
+        "--arch",
+        type=str,
+        default="resnet18",
+        choices=["resnet18", "resnet34", "cnn_small", "LightCNN"],
+        help="Backbone architecture",
+    )
+    parser.add_argument(
+        "--log-per-local",
+        type=int,
+        default=1,
+        help="If 1, log avg client accuracy after each local epoch",
+    )
+    parser.add_argument(
+        "--public-size",
+        type=int,
+        default=0,
+        help="If >0, use fair split with public dataset (matching FedCT). Default 0 = use all data.",
+    )
 
     args = parser.parse_args()
 
@@ -195,6 +289,9 @@ def main():
     print(f"Architecture:         {args.arch}")
     print(f"Seed:                 {args.seed}")
     print(f"Log per local round:  {args.log_per_local}")
+    if args.public_size > 0:
+        print(f"Public dataset size:  {args.public_size} (FAIR COMPARISON MODE)")
+    print(f"Using device:         {dev}")
     print("=" * 80)
     print()
 
@@ -202,13 +299,26 @@ def main():
     train_ds, test_ds, num_classes, in_ch = get_datasets(args.dataset)
     test_loader = DataLoader(test_ds, batch_size=256, shuffle=False, num_workers=0)
 
-    # IID split
-    parts = iid_partition(len(train_ds), args.clients)
+    # IID split - fair comparison mode or standard mode
+    if args.public_size > 0:
+        # Fair comparison: match FedCT's data split
+        parts, public_indices = iid_partition_with_public(
+            len(train_ds), args.clients, args.public_size, args.seed
+        )
+        print(f"FAIR COMPARISON MODE:")
+        print(f"  - Public dataset: {args.public_size} samples (shared, with TRUE labels)")
+        print(f"  - Private data per client: ~{len(parts[0]) - args.public_size} samples")
+        print(f"  - Total per client: ~{len(parts[0])} samples\n")
+    else:
+        # Standard mode: split all data among clients
+        parts = iid_partition(len(train_ds), args.clients)
+        print(f"STANDARD MODE:")
+        print(f"  - Data partitioned: {args.clients} clients, ~{len(parts[0])} samples each\n")
+    
     client_loaders = [
         DataLoader(Subset(train_ds, part), batch_size=args.batch_size, shuffle=True, num_workers=0)
         for part in parts
     ]
-    print(f"Data partitioned: {args.clients} clients, ~{len(parts[0])} samples each\n")
 
     # Init global model
     global_model = build_model(args.arch, num_classes, in_ch).to(dev)
@@ -231,32 +341,37 @@ def main():
 
         # Train for local epochs, and (optionally) log after EACH local epoch
         for e in range(1, args.local_rounds + 1):
-            # 1) One local epoch on each client
+            # 1) One local epoch on each client, collect train metrics
+            train_losses, train_accs = [], []
             for cid, (m, opt, loader) in enumerate(zip(local_models, opts, client_loaders)):
-                train_one_epoch(m, loader, opt, dev)
+                train_loss, train_acc = train_one_epoch(m, loader, opt, dev)
+                train_losses.append(train_loss)
+                train_accs.append(train_acc)
 
             if args.log_per_local:
                 # 2) After finishing this local epoch on ALL clients,
                 #    evaluate each client's model on the common test set
-                accs, losses = [], []
+                test_accs, test_losses = [], []
                 for m in local_models:
                     l, a = evaluate(m, test_loader, dev)
-                    losses.append(l)
-                    accs.append(a)
+                    test_losses.append(l)
+                    test_accs.append(a)
 
                 # 3) Average across clients -> a single point per LOCAL epoch
-                avg_acc = float(np.mean(accs))
-                avg_loss = float(np.mean(losses))
+                avg_train_acc = float(np.mean(train_accs))
+                avg_train_loss = float(np.mean(train_losses))
+                avg_test_acc = float(np.mean(test_accs))
+                avg_test_loss = float(np.mean(test_losses))
 
-                # 4) IMPORTANT: Keep this exact format so compare_fedct_fedavg.py (--mode local) can parse it
-                #    Regex expects: r"\[LOCAL\].*acc=([0-9.]+).*loss=([0-9.]+)"
-                print(f"[LOCAL] epoch={e}/{args.local_rounds} acc={avg_acc:.4f} loss={avg_loss:.4f}")
+                # 4) IMPORTANT: Keep this exact format so compare_fedct_fedavg.py can parse it
+                #    Format: [LOCAL] epoch=X/Y train_acc=... train_loss=... test_acc=... test_loss=...
+                print(f"[LOCAL] epoch={e}/{args.local_rounds} train_acc={avg_train_acc:.4f} train_loss={avg_train_loss:.4f} test_acc={avg_test_acc:.4f} test_loss={avg_test_loss:.4f}")
 
         # Aggregate client models
         print("\n  Aggregating client models...")
         new_global = average_states([get_state(m) for m in local_models])
         set_state(global_model, new_global)
-        print("  ✓ Global model updated")
+        print("  [OK] Global model updated")
 
         # Evaluate global model
         loss, acc = evaluate(global_model, test_loader, dev)

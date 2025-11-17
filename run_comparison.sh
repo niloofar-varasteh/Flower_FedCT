@@ -8,10 +8,11 @@ export PYTHONIOENCODING=utf-8
 export PYTHONUNBUFFERED=1
 
 # Default parameters (same for both experiments)
-COMM_ROUNDS=20
+COMM_ROUNDS=2
 CLIENTS=5
 LOCAL_ROUNDS=10
 DATASET="CIFAR10"
+Architecture="LightCNN"
 OPTIMIZER="Adam"
 LR=0.001
 BATCH_SIZE=64
@@ -19,6 +20,10 @@ BATCH_SIZE=64
 # FedCT-specific
 UNLABELED_SIZE=100
 PUBLIC_BATCH=32
+Architecture="LightCNN"
+LEARNING_RATE=0.001
+BATCH_SIZE=64
+OPTIMIZER="Adam"
 
 # Colors
 GREEN='\033[0;32m'

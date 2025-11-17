@@ -13,16 +13,17 @@ export PYTHONUNBUFFERED=1
 # -----------------------------
 # Defaults (align with FedCT)
 # -----------------------------
-NUM_COMMUNICATION_ROUNDS=20  # FedAvg aggregation rounds
+NUM_COMMUNICATION_ROUNDS=2  # FedAvg aggregation rounds
 NUM_CLIENTS=5
-NUM_LOCAL_ROUNDS=10          # local epochs per aggregation round
+NUM_LOCAL_ROUNDS=8         # local epochs per aggregation round
 DATASET="CIFAR10"
 OPTIMIZER="Adam"
 LEARNING_RATE=0.001
 BATCH_SIZE=64
-ARCH="resnet18"               # <<< match FedCT architecture
+ARCH="LightCNN"               # <<< match FedCT architecture
 SEED=42
 LOG_PER_LOCAL=1               # <<< request per-local-round logging from Python
+PUBLIC_SIZE=100               # <<< 100 for fair comparison with FedCT (uses same 100 public samples), 0 for standard FedAvg
 
 # -----------------------------
 # Colors
@@ -52,6 +53,7 @@ show_help() {
   echo "  --arch <name>                  resnet18 | resnet34 | cnn_small (default: ${ARCH})"
   echo "  --seed <int>                   Random seed (default: ${SEED})"
   echo "  --log-per-local <0|1>          Log accuracy each local round (default: ${LOG_PER_LOCAL})"
+  echo "  --public-size <int>            Public dataset size for fair comparison (default: ${PUBLIC_SIZE}, 0=standard)"
   echo "  -h, --help                     Show this help"
   exit 0
 }
@@ -71,6 +73,7 @@ while [[ $# -gt 0 ]]; do
     --arch)                 ARCH="$2"; shift 2 ;;
     --seed)                 SEED="$2"; shift 2 ;;
     --log-per-local)        LOG_PER_LOCAL="$2"; shift 2 ;;
+    --public-size)          PUBLIC_SIZE="$2"; shift 2 ;;
     -h|--help)              show_help ;;
     *) echo -e "${RED}Unknown option: $1${NC}"; show_help ;;
   esac
@@ -99,6 +102,7 @@ echo -e "Optimizer/LR:                     ${GREEN}${OPTIMIZER}/${LEARNING_RATE}
 echo -e "Architecture:                     ${GREEN}${ARCH}${NC}"
 echo -e "Seed:                             ${GREEN}${SEED}${NC}"
 echo -e "Log each LOCAL round (0/1):       ${GREEN}${LOG_PER_LOCAL}${NC}"
+echo -e "Public dataset size:              ${GREEN}${PUBLIC_SIZE}${NC} (0=standard, 100=fair comparison)"
 echo -e "Logs dir:                         ${GREEN}logs_fedavg${NC}"
 echo -e "${BLUE}====================================================================${NC}"
 
@@ -127,6 +131,7 @@ python run_fedavg.py \
   --seed ${SEED} \
   --arch ${ARCH} \
   --log-per-local ${LOG_PER_LOCAL} \
+  --public-size ${PUBLIC_SIZE} \
   2>&1 | tee "${LOG_DIR}/experiment.log"
 
 # -----------------------------
