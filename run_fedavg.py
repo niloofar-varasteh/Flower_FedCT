@@ -7,6 +7,10 @@ Now supports: resnet18, resnet34, cnn_small, LightCNN.
 
 import argparse
 import random
+import sys
+from pathlib import Path
+from datetime import datetime
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -15,6 +19,20 @@ import torchvision
 import torchvision.transforms as T
 from torchvision import models as tvm
 
+class Tee:
+    """Write output to both terminal and log file."""
+
+    def __init__(self, *files):
+        self.files = files
+
+    def write(self, obj):
+        for f in self.files:
+            f.write(obj)
+            f.flush()
+
+    def flush(self):
+        for f in self.files:
+            f.flush()
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -254,7 +272,7 @@ def main():
         "--arch",
         type=str,
         default="resnet18",
-        choices=["resnet18", "resnet34", "cnn_small", "LightCNN"],
+        choices=["resnet18", "resnet34", "cnn_small", "lightcnn"],
         help="Backbone architecture",
     )
     parser.add_argument(
@@ -271,6 +289,41 @@ def main():
     )
 
     args = parser.parse_args()
+    # Normalize architecture name for folder name
+    arch_lower = args.arch.lower()
+    if arch_lower == "lightcnn":
+        arch_name = "LightCNN"
+        args.arch = "lightcnn"
+    elif arch_lower == "resnet18":
+        arch_name = "ResNet18"
+        args.arch = "resnet18"
+    elif arch_lower == "resnet34":
+        arch_name = "ResNet34"
+        args.arch = "resnet34"
+    else:
+        arch_name = args.arch
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    log_dir = Path("logs_fedavg") / (
+        f"{args.dataset}_{arch_name}_opt{args.optimizer}_lr{args.lr}"
+        f"_b{args.batch_size}_R{args.communication_rounds}"
+        f"_L{args.local_rounds}_{timestamp}"
+    )
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file = log_dir / "experiment.log"
+
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+
+    f = open(log_file, "w", encoding="utf-8")
+    sys.stdout = Tee(original_stdout, f)
+    sys.stderr = Tee(original_stderr, f)
+
+    print(f"Log directory: {log_dir}")
+    print(f"Log file: {log_file}")
+    print()
 
     # Reproducibility
     set_seed(args.seed)
@@ -385,6 +438,9 @@ def main():
     print(f"Average Test Acc:  {acc:.4f}")
     print("=" * 80)
 
-
+    sys.stdout = original_stdout
+    sys.stderr = original_stderr
+    f.close()
+    
 if __name__ == "__main__":
     main()

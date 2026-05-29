@@ -167,7 +167,7 @@ def main():
     ap = argparse.ArgumentParser(description="Compare FedCT vs FedAvg results")
     ap.add_argument("--fedavg-log", type=str, help="Path to FedAvg experiment.log (optional)")
     ap.add_argument("--fedcot-log", type=str, help="Path to FedCT experiment.log (optional)")
-    ap.add_argument("--out", type=str, default="fedct_vs_fedavg.png")
+    ap.add_argument("--out", type=str, default="FashionMNIST_LightCNN_test.png")
     ap.add_argument("--title", type=str, default="FedCT vs FedAvg")
     ap.add_argument("--mode", choices=["comm", "local"], default="local",
                     help="comm = per communication round, local = per local epoch/step")
