@@ -1,20 +1,21 @@
 """
-Flower Server App for FedCT
-Handles server-side aggregation using majority voting
+Flower Server App for FedCT.
+
+The server never aggregates model weights. It collects hard labels predicted on
+the public unlabeled dataset, computes a majority-vote consensus, and sends that
+consensus back to clients as pseudo-labels.
 """
 
 import logging
 import sys
 from collections import Counter
-from typing import List, Dict
+from typing import Dict, List
 
 import numpy as np
-from flwr.common import ndarrays_to_parameters
-from flwr.server import ServerApp, ServerConfig, ServerAppComponents
+from flwr.common import Context, FitIns, ndarrays_to_parameters
+from flwr.server import ServerApp, ServerAppComponents, ServerConfig
 from flwr.server.strategy import Strategy
-from flwr.common import Context
 
-# Configure logging to ensure output is visible
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
@@ -32,13 +33,7 @@ def normalize_architecture(arch: str) -> str:
 
 
 class FedCTStrategy(Strategy):
-    """
-    FedCT Strategy with Majority Voting
-
-    Implements Algorithm 1:
-    - L̄_t ← consensus(L¹_t, ..., L^m_t)
-    - send L̄_t to all clients
-    """
+    """FedCT strategy with majority voting over hard labels."""
 
     def __init__(
         self,
@@ -48,18 +43,7 @@ class FedCTStrategy(Strategy):
         learning_rate: float = 0.01,
         num_communication_rounds: int = 10,
     ):
-        """
-        Initialize strategy.
-
-        Args:
-            num_clients: Number of clients participating
-            num_local_rounds: Number of local rounds before communication
-            optimizer: Optimizer to use
-            learning_rate: Learning rate
-            num_communication_rounds: Total number of communication rounds
-        """
         super().__init__()
-
         self.num_clients = int(num_clients)
         self.num_local_rounds = int(num_local_rounds)
         self.optimizer = optimizer
@@ -72,156 +56,98 @@ class FedCTStrategy(Strategy):
         self.comm_round_counter = 0
 
     def initialize_parameters(self, client_manager):
-        """
-        Initialize parameters.
-
-        Returns:
-            Empty parameters because FedCT does not aggregate model weights.
-        """
+        """Return empty parameters because FedCT does not aggregate weights."""
         return ndarrays_to_parameters([])
 
     def configure_fit(self, server_round, parameters, client_manager):
-        """
-        Configure clients for one local training round.
-
-        Args:
-            server_round: Current Flower server round number
-            parameters: Model parameters, empty for FedCT
-            client_manager: Flower client manager
-
-        Returns:
-            List of client instructions
-        """
-        from flwr.common import FitIns
-
+        """Configure all clients for one local FedCT training round."""
         self.local_round_counter += 1
 
-        # Start of a new communication cycle
         if (self.local_round_counter - 1) % self.num_local_rounds == 0:
             self.comm_round_counter += 1
-
             logger.info(f"\n{'=' * 80}")
             logger.info(
-                f"📊 COMMUNICATION CYCLE "
+                f"COMMUNICATION CYCLE "
                 f"{self.comm_round_counter}/{self.num_communication_rounds} "
                 f"(Flower Round {server_round})"
             )
             logger.info(f"{'=' * 80}")
             logger.info(
-                f"→ Clients will do {self.num_local_rounds} local training rounds"
+                f"-> Clients will do {self.num_local_rounds} local training rounds"
             )
-            logger.info("→ Then share predictions on public dataset")
+            logger.info("-> Then share predictions on public dataset")
             logger.info(f"{'=' * 80}")
 
-        # Sample all clients
         clients = client_manager.sample(
             num_clients=self.num_clients,
             min_num_clients=self.num_clients,
         )
 
         config_list = []
-
-        for idx, client in enumerate(clients):
+        for client in clients:
             config = {
                 "optimizer": self.optimizer,
                 "learning_rate": self.learning_rate,
-                "logical_partition_id": idx,
             }
 
-            # Send consensus labels if available
             if self.previous_consensus is not None:
                 config["consensus_labels"] = ",".join(
                     map(str, self.previous_consensus)
                 )
 
-            # Last local round before communication
-            is_communication_round = (
+            config["make_predictions"] = (
                 self.local_round_counter % self.num_local_rounds == 0
             )
-            config["make_predictions"] = is_communication_round
-
-            fit_ins = FitIns(parameters=parameters, config=config)
-            config_list.append((client, fit_ins))
+            config_list.append((client, FitIns(parameters=parameters, config=config)))
 
         return config_list
 
     def aggregate_fit(self, server_round, results, failures):
-        """
-        Aggregate results and perform majority voting on communication rounds.
+        """Collect metrics and perform majority voting on communication rounds."""
+        if failures:
+            raise RuntimeError(
+                f"FedCT requires all {self.num_clients} clients, "
+                f"but round {server_round} had {len(failures)} failure(s)."
+            )
 
-        Args:
-            server_round: Current Flower server round number
-            results: List of client fit results
-            failures: List of failed clients
-
-        Returns:
-            Empty parameters and aggregation statistics
-        """
         if not results:
             return None, {}
 
         stats = {}
-
         is_communication_round = (
             self.local_round_counter % self.num_local_rounds == 0
         )
-
         local_within_cycle = (
             (self.local_round_counter - 1) % self.num_local_rounds
         ) + 1
 
-        # Collect metrics from all clients
         client_metrics = {}
-
-        for i, (_, fit_res) in enumerate(results):
-            client_metrics[i] = {
+        for idx, (_, fit_res) in enumerate(results):
+            client_metrics[idx] = {
                 "train_loss": fit_res.metrics.get("train_loss", 0.0),
                 "train_acc": fit_res.metrics.get("train_acc", 0.0),
                 "test_loss": fit_res.metrics.get("test_loss", 0.0),
                 "test_acc": fit_res.metrics.get("test_acc", 0.0),
             }
 
-        # Print average metrics at every local round
-        if client_metrics:
-            train_accs = [m["train_acc"] for m in client_metrics.values()]
-            test_accs = [m["test_acc"] for m in client_metrics.values()]
-            train_losses = [m["train_loss"] for m in client_metrics.values()]
-            test_losses = [m["test_loss"] for m in client_metrics.values()]
+        self._print_local_metrics(local_within_cycle, server_round, client_metrics)
 
-            avg_train_acc = np.mean(train_accs)
-            avg_test_acc = np.mean(test_accs)
-            avg_train_loss = np.mean(train_losses)
-            avg_test_loss = np.mean(test_losses)
-
-            logger.info(
-                f"✓ Local Round {local_within_cycle}/{self.num_local_rounds} "
-                f"[Flower Round {server_round}]: "
-                f"Train Loss: {avg_train_loss:.4f}, "
-                f"Train Acc: {avg_train_acc:.4f}, "
-                f"Test Loss: {avg_test_loss:.4f}, "
-                f"Test Acc: {avg_test_acc:.4f}"
-            )
-
-        # Majority voting at communication rounds
         if is_communication_round:
             logger.info(f"\n{'=' * 80}")
             logger.info(
-                f"🗳️  COMMUNICATION ROUND "
+                f"COMMUNICATION ROUND "
                 f"{self.comm_round_counter}/{self.num_communication_rounds} "
                 f"- MAJORITY VOTING"
             )
             logger.info(f"{'=' * 80}")
 
             client_predictions = {}
-
-            for i, (_, fit_res) in enumerate(results):
+            for idx, (_, fit_res) in enumerate(results):
                 predictions_str = fit_res.metrics.get("predictions", "")
-
                 if predictions_str:
-                    predictions = [
+                    client_predictions[idx] = [
                         int(x) for x in predictions_str.split(",") if x != ""
                     ]
-                    client_predictions[i] = predictions
 
             if client_predictions:
                 consensus_labels, consensus_stats = self._majority_vote(
@@ -232,25 +158,28 @@ class FedCTStrategy(Strategy):
                     consensus_stats,
                     client_metrics,
                 )
-
                 self.previous_consensus = consensus_labels
                 self.consensus_history.append(consensus_labels)
-
                 stats.update(consensus_stats)
 
-        # Return empty parameters because FedCT does not aggregate model weights
         return ndarrays_to_parameters([]), stats
 
+    def _print_local_metrics(self, local_round, server_round, client_metrics):
+        train_accs = [m["train_acc"] for m in client_metrics.values()]
+        test_accs = [m["test_acc"] for m in client_metrics.values()]
+        train_losses = [m["train_loss"] for m in client_metrics.values()]
+        test_losses = [m["test_loss"] for m in client_metrics.values()]
+
+        logger.info(
+            f"[OK] Local Round {local_round}/{self.num_local_rounds} "
+            f"[Flower Round {server_round}]: "
+            f"Train Loss: {np.mean(train_losses):.4f}, "
+            f"Train Acc: {np.mean(train_accs):.4f}, "
+            f"Test Loss: {np.mean(test_losses):.4f}, "
+            f"Test Acc: {np.mean(test_accs):.4f}"
+        )
+
     def _majority_vote(self, client_predictions: Dict[int, List[int]]):
-        """
-        Perform majority voting on client predictions.
-
-        Args:
-            client_predictions: Dict mapping client_id to predictions
-
-        Returns:
-            consensus_labels and stats
-        """
         num_clients = len(client_predictions)
         num_samples = len(next(iter(client_predictions.values())))
 
@@ -263,24 +192,21 @@ class FedCTStrategy(Strategy):
                 client_predictions[cid][sample_idx]
                 for cid in sorted(client_predictions.keys())
             ]
-
             vote_counts = Counter(votes)
             winner = vote_counts.most_common(1)[0][0]
             consensus_labels.append(winner)
 
             agreement = vote_counts[winner] / num_clients
             agreements.append(agreement)
-
             if agreement == 1.0:
                 unanimous_count += 1
 
         labels_changed = 0
-
         if self.previous_consensus is not None:
             labels_changed = sum(
                 1
-                for i in range(num_samples)
-                if consensus_labels[i] != self.previous_consensus[i]
+                for idx in range(num_samples)
+                if consensus_labels[idx] != self.previous_consensus[idx]
             )
 
         stats = {
@@ -290,25 +216,15 @@ class FedCTStrategy(Strategy):
             "unanimous": float(unanimous_count),
             "changed": float(labels_changed),
         }
-
         return consensus_labels, stats
 
     def _print_summary(self, consensus, stats, client_metrics):
-        """
-        Print aggregation summary.
-
-        Args:
-            consensus: Consensus labels
-            stats: Agreement statistics
-            client_metrics: Client training metrics
-        """
         num_samples = len(consensus)
 
         logger.info(f"\n{'-' * 80}")
         logger.info("MAJORITY VOTING RESULTS:")
         logger.info(f"{'-' * 80}")
-        logger.info(f"Consensus Labels (L̄_t) - {num_samples} samples:")
-
+        logger.info(f"Consensus Labels - {num_samples} samples:")
         if num_samples <= 20:
             logger.info(f"  {consensus}")
         else:
@@ -322,7 +238,6 @@ class FedCTStrategy(Strategy):
         logger.info(f"  Labels Changed: {int(stats['changed'])}/{num_samples}")
 
         logger.info("\nClient Performance Summary:")
-
         test_accs = [m["test_acc"] for m in client_metrics.values()]
         train_accs = [m["train_acc"] for m in client_metrics.values()]
         test_losses = [m["test_loss"] for m in client_metrics.values()]
@@ -339,46 +254,34 @@ class FedCTStrategy(Strategy):
 
         logger.info(
             f"\n  Average Train Loss: "
-            f"{np.mean(train_losses):.4f} ± {np.std(train_losses):.4f}"
+            f"{np.mean(train_losses):.4f} +/- {np.std(train_losses):.4f}"
         )
         logger.info(
             f"  Average Train Acc:  "
-            f"{np.mean(train_accs):.4f} ± {np.std(train_accs):.4f}"
+            f"{np.mean(train_accs):.4f} +/- {np.std(train_accs):.4f}"
         )
         logger.info(
             f"  Average Test Loss:  "
-            f"{np.mean(test_losses):.4f} ± {np.std(test_losses):.4f}"
+            f"{np.mean(test_losses):.4f} +/- {np.std(test_losses):.4f}"
         )
         logger.info(
             f"  Average Test Acc:   "
-            f"{np.mean(test_accs):.4f} ± {np.std(test_accs):.4f}"
+            f"{np.mean(test_accs):.4f} +/- {np.std(test_accs):.4f}"
         )
-
         logger.info(f"{'=' * 80}\n")
 
     def configure_evaluate(self, server_round, parameters, client_manager):
-        """Configure evaluation. Not used in FedCT."""
         return []
 
     def aggregate_evaluate(self, server_round, results, failures):
-        """Aggregate evaluation. Not used in FedCT."""
         return None, {}
 
     def evaluate(self, server_round, parameters):
-        """Server-side evaluation. Not used in FedCT."""
         return None
 
 
 def server_fn(context: Context):
-    """
-    Create server components for Flower.
-
-    Args:
-        context: Flower context with run configuration
-
-    Returns:
-        ServerAppComponents with strategy and config
-    """
+    """Create Flower server components for the FedCT app."""
     num_communication_rounds = int(
         context.run_config.get("num-communication-rounds", 10)
     )
@@ -391,7 +294,6 @@ def server_fn(context: Context):
     architecture = normalize_architecture(
         context.run_config.get("architecture", "ResNet18")
     )
-
     total_server_rounds = num_communication_rounds * num_local_rounds
 
     logger.info(f"\n{'=' * 80}")
@@ -426,9 +328,7 @@ def server_fn(context: Context):
         num_rounds=total_server_rounds,
         round_timeout=None,
     )
-
     return ServerAppComponents(strategy=strategy, config=config)
 
 
-# Create Flower ServerApp
 app = ServerApp(server_fn=server_fn)

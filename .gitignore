@@ -11,3 +11,18 @@ data/cifar-10-python.tar.gz
 # Logs
 logs/
 logs_fedavg/
+# Datasets
+data/
+baselines/fedavg_flower/data/
+*.tar.gz
+*.zip
+*.gz
+
+# Logs and outputs
+logs/
+logs_fedavg/
+*.log
+
+# Python cache
+__pycache__/
+*.pyc

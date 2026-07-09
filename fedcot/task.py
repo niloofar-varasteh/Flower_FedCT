@@ -242,7 +242,6 @@ def load_data(partition_id: int, num_partitions: int = 5, unlabeled_size: int = 
         unlabeled_size: Size of public unlabeled dataset U (shared across all clients)
         batch_size: Batch size for training
         dataset: Dataset name - "CIFAR10" or "FashionMNIST"
-
     Returns:
         trainloader: DataLoader for private training data
         valloader: DataLoader for test/validation data
@@ -266,6 +265,9 @@ def load_data(partition_id: int, num_partitions: int = 5, unlabeled_size: int = 
         trainset = torchvision.datasets.CIFAR10(
             root="./data", train=True, download=True, transform=transform_train
         )
+        public_base = torchvision.datasets.CIFAR10(
+            root="./data", train=True, download=True, transform=transform_test
+        )
         testset = torchvision.datasets.CIFAR10(
             root="./data", train=False, download=True, transform=transform_test
         )
@@ -280,6 +282,9 @@ def load_data(partition_id: int, num_partitions: int = 5, unlabeled_size: int = 
         ])
         trainset = torchvision.datasets.FashionMNIST(
             root="./data", train=True, download=True, transform=transform_train
+        )
+        public_base = torchvision.datasets.FashionMNIST(
+            root="./data", train=True, download=True, transform=transform_test
         )
         testset = torchvision.datasets.FashionMNIST(
             root="./data", train=False, download=True, transform=transform_test
@@ -299,8 +304,9 @@ def load_data(partition_id: int, num_partitions: int = 5, unlabeled_size: int = 
     private_mask[public_indices] = False
     private_indices = all_indices[private_mask]
 
-    # Create public unlabeled dataset
-    public_dataset = UnlabeledDataset(trainset, public_indices)
+    # Create a deterministic public unlabeled dataset U. Public predictions must
+    # refer to the same samples/views across clients and communication rounds.
+    public_dataset = UnlabeledDataset(public_base, public_indices)
 
     # Partition private data among clients (IID split)
     samples_per_client = len(private_indices) // num_partitions
@@ -515,29 +521,22 @@ def create_pseudo_labeled_dataset(public_dataset, consensus_labels: List[int]):
 
 def combine_with_pseudo_labels(trainloader, pseudo_dataset, public_batch_size=32):
     """
-    Create a combined training approach with separate batch sampling.
-
-    This returns two dataloaders:
-    1. Private data loader (for sampling private batches)
-    2. Public pseudo-labeled data loader (for sampling public batches)
+    Create a single loader over D_i union P.
 
     Args:
         trainloader: DataLoader with private training data
         pseudo_dataset: PseudoLabeledDataset with consensus labels
-        public_batch_size: Batch size for public data sampling
+        public_batch_size: Kept for backward-compatible call sites.
 
     Returns:
-        Tuple of (private_loader, public_loader) for mixed batch training
+        DataLoader over the union of private and pseudo-labeled public data.
     """
-    # Private data loader (already exists)
-    private_loader = trainloader
-
-    # Public pseudo-labeled data loader
-    public_loader = DataLoader(
-        pseudo_dataset,
-        batch_size=public_batch_size,
+    combined_dataset = ConcatDataset([trainloader.dataset, pseudo_dataset])
+    combined_loader = DataLoader(
+        combined_dataset,
+        batch_size=trainloader.batch_size,
         shuffle=True,
         num_workers=0
     )
 
-    return private_loader, public_loader
+    return combined_loader
