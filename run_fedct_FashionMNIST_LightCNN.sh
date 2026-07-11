@@ -42,7 +42,9 @@ mkdir -p "$LOG_DIR"
 
 "${PYTHON_BIN}" prepare_dataset.py --dataset "${DATASET}" --retry-clean
 
-"${FLWR_BIN}" run . --federation-config "options.num-supernodes=${CLIENTS}" --run-config \
+"${FLWR_BIN}" run . \
+  --federation-config "options.num-supernodes=${CLIENTS} options.backend.client-resources.num-cpus=1 options.backend.client-resources.num-gpus=0.2" \
+  --run-config \
   "num-communication-rounds=${COMM_ROUNDS} \
   num-clients=${CLIENTS} \
   num-local-rounds=${LOCAL_ROUNDS} \

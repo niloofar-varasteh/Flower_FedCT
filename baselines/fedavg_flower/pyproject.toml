@@ -44,5 +44,5 @@ options.num-supernodes = 5
 options.backend.init_args.num_cpus = 2
 options.backend.init_args.logging_level = 40
 options.backend.init_args.log_to_driver = false
-options.backend.client_resources.num_cpus = 1
-options.backend.client_resources.num_gpus = 0.2
+options.backend.client-resources.num-cpus = 1
+options.backend.client-resources.num-gpus = 0.2
