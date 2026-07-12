@@ -29,7 +29,7 @@ dataset: [CIFAR10, FashionMNIST]
 
 **Why this matters:** The paper argues that hard-label sharing can preserve model quality while reducing privacy leakage compared with parameter sharing or soft-label sharing. In the paper's privacy evaluation, vulnerability values close to `0.5` correspond to membership inference attacks behaving close to random guessing.
 
-**FedAvg role in this repository:** FedAvg is not the main method and is not manually reimplemented. It is a separate Flower baseline app that calls Flower's built-in strategy:
+**FedAvg role in this repository:** FedAvg is not the main method. The baseline is implemented as a separate Flower app, and the server-side aggregation uses Flower's built-in FedAvg strategy instead of a manually implemented averaging routine:
 
 ```python
 from flwr.server.strategy import FedAvg
@@ -196,7 +196,7 @@ The generated plots are written to:
 plots/
 ```
 
-## Expected Results from This Repository
+## Current Experimental Results
 
 The main goal of the current experiments is to verify that the Flower-based FedCT implementation trains correctly, keeps client models local, and achieves competitive accuracy using hard-label consensus. The following table reports the latest completed runs in this repository.
 
@@ -204,12 +204,12 @@ The main goal of the current experiments is to verify that the Flower-based FedC
 
 <img alt="FedCT final test accuracy" src="_static/fedct_final_test_accuracy.png" width="850"/>
 
-| Dataset | Model | FedCT Train Acc | FedCT Test Acc | Log folder |
-|---|---|---:|---:|---|
-| CIFAR10 | LightCNN | 0.8845 | 0.7763 | `CIFAR10_LightCNN_optAdam_lr0.001_b64_R20_L8_20260708_230553` |
-| CIFAR10 | ResNet18 | 0.9490 | 0.8187 | `CIFAR10_ResNet18_optAdam_lr0.001_b64_R20_L8_20260710_135125` |
-| FashionMNIST | LightCNN | 0.9911 | 0.8807 | `FashionMNIST_LightCNN_optAdam_lr0.001_b64_R20_L8_20260708_220426` |
-| FashionMNIST | ResNet18 | 0.9911 | 0.8871 | `FashionMNIST_ResNet18_optAdam_lr0.001_b64_R20_L8_20260711_110929` |
+| Dataset | Model | FedCT Train Acc | FedCT Test Acc |
+|---|---|---:|---:|
+| CIFAR10 | LightCNN | 0.8845 | 0.7763 |
+| CIFAR10 | ResNet18 | 0.9490 | 0.8187 |
+| FashionMNIST | LightCNN | 0.9911 | 0.8807 |
+| FashionMNIST | ResNet18 | 0.9911 | 0.8871 |
 
 ### Context with the FedAvg Baseline
 
@@ -285,13 +285,13 @@ The FedAvg baseline remains separate from the FedCT code path. It uses Flower's 
 To move closer to the paper's setting, increase the public unlabeled set size and train for more communication cycles:
 
 ```bash
-COMM_ROUNDS=70 LOCAL_ROUNDS=10 UNLABELED_SIZE=1000 LR=0.01 bash run_fedct_CIFAR10_LightCNN.sh
+COMM_ROUNDS=70 LOCAL_ROUNDS=10 UNLABELED_SIZE=1000 LR=0.001 bash run_fedct_CIFAR10_LightCNN.sh
 ```
 
 For a stronger CIFAR10 reproduction, use a larger public unlabeled set:
 
 ```bash
-COMM_ROUNDS=300 LOCAL_ROUNDS=10 UNLABELED_SIZE=10000 LR=0.01 bash run_fedct_CIFAR10_LightCNN.sh
+OPTIMIZER=SGD LR=0.01 COMM_ROUNDS=300 LOCAL_ROUNDS=10 UNLABELED_SIZE=10000 bash run_fedct_CIFAR10_LightCNN.sh
 ```
 
 For Windows GPU memory issues, reduce batch size:
